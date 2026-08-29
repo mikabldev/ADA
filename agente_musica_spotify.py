@@ -12,9 +12,11 @@ def obtener_metadatos_playlist_publica(url_playlist):
     print("\n=== Leyendo metadatos desde la lista de Spotify ===")
     
     # Extraer el ID de la playlist
-    playlist_id = url_playlist.strip().split("playlist/")[1].split("?")[0] if "playlist/" in url_playlist else url_playlist.strip().split("?")[0]
+    if "playlist/" in url_playlist:
+        playlist_id = url_playlist.strip().split("playlist/")[1].split("?")[0]
+    else:
+        playlist_id = url_playlist.strip().split("?")[0]
     
-    # URL del endpoint público embed de Spotify
     embed_url = f"https://open.spotify.com/embed/playlist/{playlist_id}"
     
     headers = {
@@ -28,43 +30,54 @@ def obtener_metadatos_playlist_publica(url_playlist):
             return []
             
         soup = BeautifulSoup(response.text, 'html.parser')
-        
-        # Spotify incrusta el JSON con las pistas dentro de un tag <script id="resource">
         script_tag = soup.find('script', id='resource')
         
         canciones = []
         if script_tag and script_tag.string:
             import json
             data = json.loads(script_tag.string)
+            
+            # Nombre general de la playlist para descartarlo
+            nombre_playlist = data.get('name', '').strip().lower()
+            
+            # Pistas contenidas en la playlist
             tracks = data.get('tracks', {}).get('items', [])
             
             for item in tracks:
                 track = item.get('track', item)
-                titulo = track.get('name')
+                titulo = track.get('name', '').strip()
                 artistas = track.get('artists', [])
-                artista = artistas[0].get('name') if artistas else "Artista Desconocido"
+                artista = artistas[0].get('name', '').strip() if artistas else ""
                 
-                if titulo and artista:
-                    clave = f"{artista} - {titulo}"
-                    canciones.append({
-                        'query_limpia': clave,
-                        'nombre_salida': clave
-                    })
+                if not titulo or not artista:
+                    continue
+                
+                # Filtrar si el título o artista coincide con el nombre de la playlist o etiquetas reservadas
+                if titulo.lower() == nombre_playlist or "spotify" in artista.lower():
+                    continue
+                    
+                clave = f"{artista} - {titulo}"
+                canciones.append({
+                    'query_limpia': clave,
+                    'nombre_salida': clave
+                })
         else:
-            # Respaldo mediante regex sobre el HTML del reproductor embed
+            # Respaldo mediante regex
             matches = re.findall(r'"title":"([^"]+)".*?"subtitle":"([^"]+)"', response.text)
             for titulo, artista in matches:
+                if "spotify" in artista.lower():
+                    continue
                 clave = f"{artista} - {titulo}"
                 canciones.append({
                     'query_limpia': clave,
                     'nombre_salida': clave
                 })
 
-        print(f"  <3 Se identificaron {len(canciones)} canciones únicas en la lista.\n")
+        print(f"  ✓ Se identificaron {len(canciones)} canciones reales en la lista.\n")
         return canciones
 
     except Exception as e:
-        print(f"Error al leer los datos de Spotify: {e}\n")
+        print(f"Ocurrió un error al leer los datos de Spotify: Volviendo... {e}\n")
         return []
 
 def descargar_desde_fuentes_abiertas(lista_canciones):
