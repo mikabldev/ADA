@@ -33,14 +33,20 @@ sp = spotipy.Spotify(auth_manager=SpotifyClientCredentials(
 # -------------------------------------------------------------------
 def obtener_canciones_de_playlist(playlist_url_o_id):
     """
-    Lee una playlist de Spotify y retorna una lista con los metadatos
-    oficiales limpios de cada canción.
+    Lee una playlist de Spotify procesando la URL o ID.
     """
     print("=== Extrayendo metadatos de la Playlist de Spotify ===")
     lista_canciones = []
     
+    # Limpiar la URL para extraer únicamente el ID de la playlist
+    if "spotify.com/playlist/" in playlist_url_o_id:
+        # Extrae el ID eliminando parámetros extra como ?si=...
+        playlist_id = playlist_url_o_id.split("playlist/")[1].split("?")[0]
+    else:
+        playlist_id = playlist_url_o_id
+        
     try:
-        resultados = sp.playlist_items(playlist_url_o_id)
+        resultados = sp.playlist_items(playlist_id)
         tracks = resultados['items']
         
         # Paginación para playlists largas (> 100 temas)
