@@ -131,35 +131,43 @@ def limpiar_texto(texto):
 
 def buscar_candidatos_multifuente(query):
     """
-    Busca candidatos en YouTube, SoundCloud y Bandcamp.
+    Busca candidatos en YouTube y SoundCloud descartando automáticamente
+    sets o DJ mixes mayores a 10 minutos (600 segundos).
     """
-    opts = {'quiet': True, 'extract_flat': True}
+    opts = {
+        'quiet': True, 
+        'extract_flat': False,
+        'match_filter': yt_dlp.utils.match_filter_func('duration <= 600')
+    }
     candidatos = []
     
-    # 1. Búsqueda en YouTube
+    def es_track_valido(cand):
+        if not cand:
+            return False
+        dur = cand.get('duration')
+        if dur and dur > 600:
+            return False
+        return True
+
+    # 1. Búsqueda prioritaria en YouTube (evita DRM de SoundCloud)
     with yt_dlp.YoutubeDL(opts) as ydl:
         try:
-            res_yt = ydl.extract_info(f"ytsearch2:{query}", download=False)
+            res_yt = ydl.extract_info(f"ytsearch3:{query}", download=False)
             if res_yt and res_yt.get('entries'):
-                candidatos.extend(res_yt['entries'])
+                for e in res_yt['entries']:
+                    if es_track_valido(e):
+                        candidatos.append(e)
         except Exception:
             pass
 
     # 2. Búsqueda en SoundCloud
     with yt_dlp.YoutubeDL(opts) as ydl:
         try:
-            res_sc = ydl.extract_info(f"scsearch2:{query}", download=False)
+            res_sc = ydl.extract_info(f"scsearch3:{query}", download=False)
             if res_sc and res_sc.get('entries'):
-                candidatos.extend(res_sc['entries'])
-        except Exception:
-            pass
-
-    # 3. Búsqueda en Bandcamp (Fallback 2)
-    with yt_dlp.YoutubeDL(opts) as ydl:
-        try:
-            res_bc = ydl.extract_info(f"bcsearch2:{query}", download=False)
-            if res_bc and res_bc.get('entries'):
-                candidatos.extend(res_bc['entries'])
+                for e in res_sc['entries']:
+                    if es_track_valido(e):
+                        candidatos.append(e)
         except Exception:
             pass
 
@@ -259,18 +267,11 @@ def descargar_canciones(lista_verificada):
         ydl_opts = {
             'format': 'bestaudio/best',
             'match_filter': yt_dlp.utils.match_filter_func('duration <= 600'),
-            'add_metadata': True,  # Incrusta metadatos automáticamente
-            'postprocessors': [
-                {
-                    'key': 'FFmpegExtractAudio',
-                    'preferredcodec': 'wav',
-                    'preferredquality': '192',
-                },
-                {
-                    'key': 'FFmpegMetadata',  # Escribe la información en las propiedades del WAV
-                    'add_chapters': True,
-                }
-            ],
+            'postprocessors': [{
+                'key': 'FFmpegExtractAudio',
+                'preferredcodec': 'wav',
+                'preferredquality': '192',
+            }],
             'outtmpl': os.path.join(DOWNLOADS_FOLDER, f'{nombre_archivo}.%(ext)s'),
             'quiet': True,
             'no_warnings': True,
@@ -278,34 +279,34 @@ def descargar_canciones(lista_verificada):
         
         print(f"Guardando en 'Descargas ADA': {nombre_archivo}.wav...")
         
-        # Intento 1: Fuente principal
+        # Intento 1: Fuente seleccionada
         try:
             with yt_dlp.YoutubeDL(ydl_opts) as ydl:
                 ydl.download([item['url']])
-            print(f"  ✓ Descarga completada con metadatos incrustados.\n")
+            print(f"  ✓ Descarga completada.\n")
             descargadas_ok += 1
             continue
         except Exception:
-            print(f"  ⚠️ Error en la fuente principal ({item.get('fuente', 'YouTube')}). Probando Fallback 1: SoundCloud...")
+            print(f"  ⚠️ Error en fuente ({item.get('fuente', 'Principal')}). Probando Fallback 1: Búsqueda en YouTube...")
 
-        # Intento 2: Fallback 1 -> SoundCloud
+        # Intento 2: Fallback 1 -> YouTube (Resuelve bloqueos DRM de SoundCloud)
+        try:
+            with yt_dlp.YoutubeDL(ydl_opts) as ydl:
+                ydl.download([f"ytsearch1:{item['query_original']}"])
+            print(f"  ✓ Recuperada con éxito desde YouTube.\n")
+            descargadas_ok += 1
+            continue
+        except Exception:
+            print(f"  ⚠️ Fallback YouTube sin éxito. Probando Fallback 2: SoundCloud alternativo...")
+
+        # Intento 3: Fallback 2 -> SoundCloud alternativo
         try:
             with yt_dlp.YoutubeDL(ydl_opts) as ydl:
                 ydl.download([f"scsearch1:{item['query_original']}"])
             print(f"  ✓ Recuperada con éxito desde SoundCloud.\n")
             descargadas_ok += 1
-            continue
-        except Exception:
-            print(f"  ⚠️ Fallback SoundCloud sin éxito. Probando Fallback 2: Bandcamp...")
-
-        # Intento 3: Fallback 2 -> Bandcamp
-        try:
-            with yt_dlp.YoutubeDL(ydl_opts) as ydl:
-                ydl.download([f"bcsearch1:{item['query_original']}"])
-            print(f"  ✓ Recuperada con éxito desde Bandcamp.\n")
-            descargadas_ok += 1
         except Exception as e:
-            print(f"  ❌ Error final: No se pudo procesar {nombre_archivo} en ninguna plataforma ({e})\n")
+            print(f"  ❌ Error final: No se pudo procesar {nombre_archivo} ({e})\n")
             fallidas += 1
                 
     return descargadas_ok, fallidas
