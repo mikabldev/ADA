@@ -1,5 +1,6 @@
 import os
 import re
+import html
 import requests
 from bs4 import BeautifulSoup
 from rapidfuzz import fuzz
@@ -17,7 +18,8 @@ os.makedirs(DOWNLOADS_FOLDER, exist_ok=True)
 
 def obtener_metadatos_spotify(url_playlist):
     """
-    Extrae los metadatos de una playlist pública de Spotify sin API Keys.
+    Extrae los metadatos de una playlist pública de Spotify decodificando caracteres Unicode
+    y filtrando la cabecera de la lista.
     """
     print("\n∘₊✧─── Leyendo metadatos desde Spotify ───✧₊∘")
     
@@ -44,7 +46,11 @@ def obtener_metadatos_spotify(url_playlist):
         if script_tag and script_tag.string:
             import json
             data = json.loads(script_tag.string)
+            
             nombre_playlist = data.get('name', '').strip().lower()
+            owner_data = data.get('owner', {})
+            owner_name = owner_data.get('name', '').strip().lower() if isinstance(owner_data, dict) else ''
+            
             tracks = data.get('tracks', {}).get('items', [])
             
             for item in tracks:
@@ -56,7 +62,18 @@ def obtener_metadatos_spotify(url_playlist):
                 if not titulo or not artista:
                     continue
                 
-                if titulo.lower() == nombre_playlist or "spotify" in artista.lower():
+                # Decodificar caracteres como \u0026 -> &
+                titulo = html.unescape(titulo)
+                artista = html.unescape(artista)
+                
+                titulo_lower = titulo.lower()
+                artista_lower = artista.lower()
+                
+                # Filtrar si coincide exactamente con el título o creador de la playlist
+                if (titulo_lower == nombre_playlist or 
+                    artista_lower == owner_name or 
+                    "spotify" in artista_lower or 
+                    "user" in artista_lower):
                     continue
                     
                 clave = f"{artista} - {titulo}"
@@ -67,13 +84,20 @@ def obtener_metadatos_spotify(url_playlist):
         else:
             matches = re.findall(r'"title":"([^"]+)".*?"subtitle":"([^"]+)"', response.text)
             for titulo, artista in matches:
-                if "spotify" in artista.lower():
+                titulo_clean = html.unescape(titulo)
+                artista_clean = html.unescape(artista)
+                if "spotify" in artista_clean.lower():
                     continue
-                clave = f"{artista} - {titulo}"
+                clave = f"{artista_clean} - {titulo_clean}"
                 canciones.append({
                     'query_limpia': clave,
                     'nombre_salida': clave
                 })
+
+        # SOLUCIÓN DE SEGURIDAD: Si el primer elemento sigue siendo la cabecera/título general de la lista,
+        # cortamos la lista para que empiece en el índice 1 (canciones[1:])
+        if canciones and ("spotify" in canciones[0]['query_limpia'].lower() or "user" in canciones[0]['query_limpia'].lower()):
+            canciones = canciones[1:]
 
         print(f"  ✓ Se identificaron {len(canciones)} canciones en Spotify.\n")
         return canciones
@@ -84,36 +108,59 @@ def obtener_metadatos_spotify(url_playlist):
 
 def obtener_metadatos_ytdlp(url_playlist, plataforma="YouTube / SoundCloud"):
     """
-    Extrae los metadatos de playlists públicas o no listadas de YouTube o SoundCloud.
+    Extrae los metadatos de playlists de SoundCloud/YouTube soportando
+    sets públicos de SoundCloud, URLs acortadas y parámetros de rastreo.
     """
     print(f"\n∘₊✧─── Leyendo metadatos desde {plataforma} ───✧₊∘")
     canciones = []
     
+    # Limpiar basura de rastreo (?si=..., &utm_source=...)
+    url_limpia = url_playlist.split("?")[0].strip()
+    
+    # Si viene con enlace acortado, resolver redirección
+    if "on.soundcloud.com" in url_limpia:
+        try:
+            res_redir = requests.head(url_limpia, allow_redirects=True, headers={'User-Agent': 'Mozilla/5.0'})
+            url_limpia = res_redir.url.split("?")[0]
+        except Exception:
+            pass
+
+    # Para SoundCloud se desactiva extract_flat para forzar la lectura completa de los títulos
+    is_soundcloud = "soundcloud.com" in url_limpia.lower()
+    
     opts = {
-        'extract_flat': True,
+        'extract_flat': False if is_soundcloud else 'in_playlist',
         'quiet': True,
+        'no_warnings': True,
         'skip_download': True
     }
     
     try:
         with yt_dlp.YoutubeDL(opts) as ydl:
-            res = ydl.extract_info(url_playlist, download=False)
+            res = ydl.extract_info(url_limpia, download=False)
             
         entries = res.get('entries', []) if res else []
+        
+        # Si res no es un listado sino un track individual
+        if not entries and res:
+            entries = [res]
         
         for entry in entries:
             if not entry:
                 continue
             
-            titulo = entry.get('title', '').strip()
-            uploader = (entry.get('uploader') or entry.get('channel') or "Artista Desconocido").strip()
+            titulo = html.unescape(entry.get('title', '').strip())
+            uploader = html.unescape((entry.get('uploader') or entry.get('channel') or entry.get('artist') or "Artista Desconocido").strip())
             
             if titulo:
+                # Armar la clave de búsqueda limpia
                 clave = titulo if " - " in titulo else f"{uploader} - {titulo}"
+                url_cancion = entry.get('webpage_url') or entry.get('url')
+                
                 canciones.append({
                     'query_limpia': clave,
                     'nombre_salida': clave,
-                    'url_directa': entry.get('url') or entry.get('webpage_url')
+                    'url_directa': url_cancion if (url_cancion and url_cancion.startswith("http")) else None
                 })
                 
         print(f"  ✓ Se identificaron {len(canciones)} canciones en {plataforma}.\n")
@@ -136,6 +183,7 @@ def buscar_candidatos_multifuente(query):
     """
     opts = {
         'quiet': True, 
+        'no_warnings': True,
         'extract_flat': False,
         'match_filter': yt_dlp.utils.match_filter_func('duration <= 600')
     }
@@ -149,7 +197,7 @@ def buscar_candidatos_multifuente(query):
             return False
         return True
 
-    # 1. Búsqueda prioritaria en YouTube (evita DRM de SoundCloud)
+    # 1. Búsqueda prioritaria en YouTube
     with yt_dlp.YoutubeDL(opts) as ydl:
         try:
             res_yt = ydl.extract_info(f"ytsearch3:{query}", download=False)
@@ -205,10 +253,7 @@ def analizar_y_resolver_coincidencias(lista_canciones):
             uploader = cand.get('uploader') or cand.get('channel') or 'Artista Desconocido'
             url = cand.get('url') or cand.get('webpage_url')
             
-            # Identificación explícita de plataforma
-            if "bandcamp" in url.lower():
-                fuente = "Bandcamp"
-            elif "soundcloud" in url.lower():
+            if "soundcloud" in url.lower():
                 fuente = "SoundCloud"
             else:
                 fuente = "YouTube"
@@ -253,7 +298,7 @@ def analizar_y_resolver_coincidencias(lista_canciones):
     return canciones_procesadas, omitidas
 
 # -------------------------------------------------------------------
-# MÓDULO 3: DESCARGA CON SISTEMA DE FALLBACK TRIPLE (SIN MUTAGEN)
+# MÓDULO 3: DESCARGA CON SISTEMA DE FALLBACK TRIPLE
 # -------------------------------------------------------------------
 def descargar_canciones(lista_verificada):
     print("\n∘₊✧─── FASE 2: Descarga en segundo plano y extracción a .WAV ───✧₊∘\n")
@@ -289,7 +334,7 @@ def descargar_canciones(lista_verificada):
         except Exception:
             print(f"  ⚠️ Error en fuente ({item.get('fuente', 'Principal')}). Probando Fallback 1: Búsqueda en YouTube...")
 
-        # Intento 2: Fallback 1 -> YouTube (Resuelve bloqueos DRM de SoundCloud)
+        # Intento 2: Fallback 1 -> YouTube
         try:
             with yt_dlp.YoutubeDL(ydl_opts) as ydl:
                 ydl.download([f"ytsearch1:{item['query_original']}"])
@@ -299,7 +344,7 @@ def descargar_canciones(lista_verificada):
         except Exception:
             print(f"  ⚠️ Fallback YouTube sin éxito. Probando Fallback 2: SoundCloud alternativo...")
 
-        # Intento 3: Fallback 2 -> SoundCloud alternativo
+        # Intento 3: Fallback 2 -> SoundCloud
         try:
             with yt_dlp.YoutubeDL(ydl_opts) as ydl:
                 ydl.download([f"scsearch1:{item['query_original']}"])
@@ -362,16 +407,17 @@ if __name__ == "__main__":
                 total_exito, total_fallidas = descargar_canciones(canciones_verificadas)
             
             # Resumen real de métricas
-            print("⁺ " * 60)
+            print("⁺ " * 30)
             print("         °˖✧◝(⁰▿⁰)◜✧˖° RESUMEN FINAL DEL PROCESO         ")
-            print("⁺ " * 60)
+            print("⁺ " * 30)
             print(f"\n  ♫ Canciones detectadas en la lista:  {total_detectadas}")
             print(f"  ✦ Descargadas con éxito (.WAV):      {total_exito}")
             print(f"  シ Omitidas (sin fuentes libres):      {total_omitidas}")
             print(f"  ♱ Fallidas (errores de descarga):    {total_fallidas}")
-            print("⁺ " * 60)
+            print("⁺ " * 30)
             
             if total_exito > 0 and total_fallidas == 0:
                 print(" (ﾉ>ω<)ﾉ :｡･:*:･ﾟ’★,｡･:*:･ﾟ’☆ ¡Proceso completado al 100%!\n")
+                print(" " * 50)
             else:
                 print(" (Ó╭╮Ò) El proceso finalizó con algunas advertencias o fallas.\n")
