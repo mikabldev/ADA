@@ -5,6 +5,7 @@ import requests
 from bs4 import BeautifulSoup
 from rapidfuzz import fuzz
 import yt_dlp
+from tqdm import tqdm
 
 # -------------------------------------------------------------------
 # CONFIGURACIÓN DE RUTAS
@@ -329,13 +330,24 @@ def analizar_y_resolver_coincidencias(lista_canciones):
 # MÓDULO 3: DESCARGA CON SISTEMA DE FALLBACK TRIPLE
 # -------------------------------------------------------------------
 def descargar_canciones(lista_verificada):
-    print("\n∘₊✧─── FASE 2: Descarga en segundo plano y extracción a .WAV ───✧₊∘\n")
+    print("\n∘₊✧─── FASE 2: Descarga y conversión a .WAV ───✧₊∘\n")
     
     descargadas_ok = 0
     fallidas = 0
     
-    for item in lista_verificada:
+    # tqdm genera la barra única [██████████████████] 100%
+    barra_progreso = tqdm(
+        lista_verificada, 
+        desc="Descargando canciones", 
+        unit="track", 
+        bar_format="{l_bar}{bar:30}{r_bar}"
+    )
+    
+    for item in barra_progreso:
         nombre_archivo = re.sub(r'[\\/*?:"<>|]', "", item['nombre_salida'])
+        
+        # Actualiza el texto visible al lado de la barra con la canción actual
+        barra_progreso.set_postfix_str(f"Procesando: {nombre_archivo[:25]}...")
         
         ydl_opts = {
             'format': 'bestaudio/best',
@@ -348,38 +360,33 @@ def descargar_canciones(lista_verificada):
             'outtmpl': os.path.join(DOWNLOADS_FOLDER, f'{nombre_archivo}.%(ext)s'),
             'quiet': True,
             'no_warnings': True,
+            'noprogress': True, # Silencia el log ruidoso de la captura
         }
         
-        print(f"Guardando en 'Descargas ADA': {nombre_archivo}.wav...")
-        
-        # Intento 1: Enlace directo ingresado o fuente validada
+        # Intento 1: URL Principal
         try:
             with yt_dlp.YoutubeDL(ydl_opts) as ydl:
                 ydl.download([item['url']])
-            print(f"  ✓ Descarga completada.\n")
-            descargadas_ok += 1
-            continue
-        except Exception as e:
-            print(f"  ⚠️ Error en la URL principal ({e}). Probando Fallback 1: Búsqueda espejo en SoundCloud...")
-
-        # Intento 2: Fallback 1 -> SoundCloud
-        try:
-            with yt_dlp.YoutubeDL(ydl_opts) as ydl:
-                ydl.download([f"scsearch1:{item['query_original']}"])
-            print(f"  ✓ Recuperada con éxito mediante espejo en SoundCloud.\n")
             descargadas_ok += 1
             continue
         except Exception:
-            print(f"  ⚠️ Fallback SoundCloud sin éxito. Probando Fallback 2: Búsqueda espejo en YouTube...")
+            pass
 
-        # Intento 3: Fallback 2 -> YouTube
+        # Intento 2: Fallback SoundCloud
+        try:
+            with yt_dlp.YoutubeDL(ydl_opts) as ydl:
+                ydl.download([f"scsearch1:{item['query_original']}"])
+            descargadas_ok += 1
+            continue
+        except Exception:
+            pass
+
+        # Intento 3: Fallback YouTube
         try:
             with yt_dlp.YoutubeDL(ydl_opts) as ydl:
                 ydl.download([f"ytsearch1:{item['query_original']}"])
-            print(f"  ✓ Recuperada con éxito mediante espejo en YouTube.\n")
             descargadas_ok += 1
-        except Exception as ex_final:
-            print(f"  ✗ Error final: No se pudo procesar {nombre_archivo} en ninguna plataforma ({ex_final})\n")
+        except Exception:
             fallidas += 1
                 
     return descargadas_ok, fallidas
