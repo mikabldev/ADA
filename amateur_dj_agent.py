@@ -360,7 +360,7 @@ def descargar_canciones(lista_verificada):
             'outtmpl': os.path.join(DOWNLOADS_FOLDER, f'{nombre_archivo}.%(ext)s'),
             'quiet': True,
             'no_warnings': True,
-            'noprogress': True, # Silencia el log ruidoso de la captura
+            'noprogress': True, # Silencia el log ruidoso de texto repetitivo
         }
         
         # Intento 1: URL Principal
