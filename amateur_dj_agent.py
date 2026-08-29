@@ -414,23 +414,23 @@ if __name__ == "__main__":
         canciones_obtenidas = []
         
         if opcion == "1":
-            url_input = input("\n> Ingrese la URL de la Playlist de Spotify: ").strip()
+            url_input = input("\n> Ingresa la URL de la Playlist de Spotify: ").strip()
             if url_input:
                 canciones_obtenidas = obtener_metadatos_spotify(url_input)
         elif opcion == "2":
-            url_input = input("\n> Ingrese la URL de la Playlist de YouTube: ").strip()
+            url_input = input("\n> Ingresa la URL de la Playlist de YouTube: ").strip()
             if url_input:
                 canciones_obtenidas = obtener_metadatos_ytdlp(url_input, "YouTube")
         elif opcion == "3":
-            url_input = input("\n> Ingrese la URL de la Playlist de SoundCloud: ").strip()
+            url_input = input("\n> Ingresa la URL de la Playlist de SoundCloud: ").strip()
             if url_input:
                 canciones_obtenidas = obtener_metadatos_ytdlp(url_input, "SoundCloud")
         elif opcion == "4":
-            url_input = input("\n> Ingrese la URL de la canción (SoundCloud / YouTube / Bandcamp): ").strip()
+            url_input = input("\n> Ingresa la URL de la canción (SoundCloud / YouTube / Bandcamp): ").strip()
             if url_input:
                 canciones_obtenidas = obtener_metadatos_cancion_unica(url_input)
         elif opcion == "5":
-            print("\nSaliendo del agente... ¡Buenas sesiones de DJ!")
+            print("\nSaliendo del agente... ¡Buenas mezclas, DJ!")
             break
         else:
             print("Esa opción no es válida. Intenta nuevamente.\n")
@@ -448,7 +448,7 @@ if __name__ == "__main__":
             
             # Resumen real de métricas
             print("⁺ " * 30)
-            print("         °˖✧◝(⁰▿⁰)◜✧˖° RESUMEN FINAL DEL PROCESO         ")
+            print("        °˖✧◝(⁰▿⁰)◜✧˖°   RESUMEN FINAL DEL PROCESO  °˖✧◝(⁰▿⁰)◜✧˖°")
             print("⁺ " * 30)
             print(f"\n  ♫ Canciones detectadas:              {total_detectadas}")
             print(f"  ✦ Descargadas con éxito (.WAV):      {total_exito}")
@@ -457,6 +457,7 @@ if __name__ == "__main__":
             print("⁺ " * 30)
             
             if total_exito > 0 and total_fallidas == 0:
-                print(" (ﾉ>ω<)ﾉ :｡･:*:･ﾟ’★,｡･:*:･ﾟ’☆ ¡Proceso completado al 100%!\n")
+                print(" ⊱ ────── {.⋅ ♫  𝑷𝑹𝑶𝑪𝑬𝑺𝑶 𝟏𝟎𝟎% 𝑪𝑶𝑴𝑷𝑳𝑬𝑻𝑨𝑫𝑶 (ﾉ>ω<)ﾉ  ♫ ⋅.} ───── ⊰ \n")
             else:
                 print(" (Ó╭╮Ò) El proceso finalizó con algunas advertencias o fallas.\n")
+                # (ﾉ>ω<)ﾉ 
