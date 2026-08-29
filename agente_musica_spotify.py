@@ -1,55 +1,54 @@
 import os
 import re
-from dotenv import load_dotenv  # <--- Librería para cargar el archivo .env
+from dotenv import load_dotenv
 from rapidfuzz import fuzz
 import spotipy
 from spotipy.oauth2 import SpotifyClientCredentials
 import yt_dlp
 
 # -------------------------------------------------------------------
-# CARGA DE CREDENCIALES DESDE VARIABLES DE ENTORNO (.env)
+# CARGA DE CREDENCIALES Y CONFIGURACIÓN
 # -------------------------------------------------------------------
-load_dotenv()  # Lee las variables del archivo .env local
+load_dotenv()
 
 SPOTIPY_CLIENT_ID = os.getenv('SPOTIPY_CLIENT_ID')
 SPOTIPY_CLIENT_SECRET = os.getenv('SPOTIPY_CLIENT_SECRET')
 
-# Validar que las credenciales estén cargadas antes de continuar
 if not SPOTIPY_CLIENT_ID or not SPOTIPY_CLIENT_SECRET:
-    raise ValueError("❌ No se encontraron las credenciales de Spotify. Revisa el archivo .env.")
+    raise ValueError("❌ No se encontraron las credenciales de Spotify en el archivo .env")
 
-# Carpeta de destino personalizada (Mi Música / Descargas ADA)
+# Ruta de destino personalizada (Mi Música / Descargas ADA)
 DOWNLOADS_FOLDER = os.path.expanduser("~/Music/Descargas ADA")
 os.makedirs(DOWNLOADS_FOLDER, exist_ok=True)
 
-# Autenticación con Spotify
+# Cliente de Spotify
 sp = spotipy.Spotify(auth_manager=SpotifyClientCredentials(
     client_id=SPOTIPY_CLIENT_ID,
     client_secret=SPOTIPY_CLIENT_SECRET
 ))
 
 # -------------------------------------------------------------------
-# MÓDULO 1: OBTENCIÓN DE DATOS DESDE SPOTIFY
+# MÓDULOS DE PROCESAMIENTO
 # -------------------------------------------------------------------
-def obtener_canciones_de_playlist(playlist_url_o_id):
+def extraer_playlist_id(entrada_usuario):
     """
-    Lee una playlist de Spotify procesando la URL o ID.
+    Limpia la entrada del usuario para extraer únicamente el ID de la playlist
+    incluso si incluye sufijos como '?si=...' o enlaces completos.
     """
-    print("=== Extrayendo metadatos de la Playlist de Spotify ===")
+    entrada = entrada_usuario.strip()
+    if "spotify.com/playlist/" in entrada:
+        return entrada.split("playlist/")[1].split("?")[0]
+    return entrada.split("?")[0]
+
+def obtener_canciones_de_playlist(playlist_input):
+    playlist_id = extraer_playlist_id(playlist_input)
+    print("\n=== Extrayendo metadatos de la Playlist de Spotify ===")
     lista_canciones = []
     
-    # Limpiar la URL para extraer únicamente el ID de la playlist
-    if "spotify.com/playlist/" in playlist_url_o_id:
-        # Extrae el ID eliminando parámetros extra como ?si=...
-        playlist_id = playlist_url_o_id.split("playlist/")[1].split("?")[0]
-    else:
-        playlist_id = playlist_url_o_id
-        
     try:
         resultados = sp.playlist_items(playlist_id)
         tracks = resultados['items']
         
-        # Paginación para playlists largas (> 100 temas)
         while resultados['next']:
             resultados = sp.next(resultados)
             tracks.extend(resultados['items'])
@@ -70,30 +69,20 @@ def obtener_canciones_de_playlist(playlist_url_o_id):
         return lista_canciones
         
     except Exception as e:
-        print(f"❌ Error al conectar con Spotify: {e}")
+        print(f"❌ Error al conectar con Spotify ({e}). Verifica el enlace o ID provisto.\n")
         return []
 
 def limpiar_texto(texto):
-    """Limpia cadenas para comparaciones de similitud."""
     return re.sub(r'[^\w\s]', '', texto).strip().lower()
 
-# -------------------------------------------------------------------
-# MÓDULO 2: ANÁLISIS DE SIMILITUD Y SELECCIÓN DE FUENTES
-# -------------------------------------------------------------------
 def analizar_y_resolver_coincidencias(lista_canciones):
-    """
-    Busca opciones en fuentes públicas mediante yt-dlp y compara
-    la similitud del título antes de autorizar la descarga.
-    """
     canciones_procesadas = []
-    
     print("=== FASE 1: Análisis y verificación de coincidencias ===\n")
     
     for i, item in enumerate(lista_canciones):
         query_busqueda = item['query_limpia']
         print(f"Procesando [{i+1}/{len(lista_canciones)}]: '{query_busqueda}'")
             
-        # Buscar candidato de audio
         opts = {'quiet': True, 'default_search': 'ytsearch3:', 'extract_flat': True}
         with yt_dlp.YoutubeDL(opts) as ydl:
             res = ydl.extract_info(query_busqueda, download=False)
@@ -122,7 +111,6 @@ def analizar_y_resolver_coincidencias(lista_canciones):
             
         opciones_evaluadas.sort(key=lambda x: x['score'], reverse=True)
         
-        # Alerta interactiva si hay incertidumbre (< 85% de similitud)
         if len(opciones_evaluadas) > 1 and opciones_evaluadas[0]['score'] < 85:
             print(f"  ⚠️ Alerta de Similitud: Diferencia detectada entre metadatos y fuente.")
             print("     Selecciona la opción correcta:")
@@ -148,13 +136,7 @@ def analizar_y_resolver_coincidencias(lista_canciones):
         
     return canciones_procesadas
 
-# -------------------------------------------------------------------
-# MÓDULO 3: DESCARGA Y CONVERSIÓN A WAV
-# -------------------------------------------------------------------
 def descargar_canciones(lista_verificada):
-    """
-    Descarga el audio en segundo plano a la carpeta especificada y convierte a .wav.
-    """
     print("\n=== FASE 2: Descarga en segundo plano y extracción a .WAV ===\n")
     
     for item in lista_verificada:
@@ -181,20 +163,35 @@ def descargar_canciones(lista_verificada):
             print(f"  ❌ Error al procesar {nombre_archivo}: {e}\n")
 
 # -------------------------------------------------------------------
-# EJECUCIÓN PRINCIPAL
+# MENÚ INTERACTIVO PRINCIPAL
 # -------------------------------------------------------------------
+def mostrar_menu():
+    print("=" * 60)
+    print("    AGENTE DE DESCARGA Y PROCESAMIENTO DE MÚSICA (ADA)")
+    print("=" * 60)
+    print(" Opciones:")
+    print("  [1] Descargar desde una Playlist de Spotify (URL o ID)")
+    print("  [2] Salir")
+    print("-" * 60)
+
 if __name__ == "__main__":
-    # Pega aquí la URL de tu playlist de Spotify
-    URL_PLAYLIST = "https://open.spotify.com/playlist/TU_PLAYLIST_ID_AQUI"
-    
-    print("Iniciando Agente de Procesamiento de Música...\n")
-    
-    # 1. Obtener lista desde Spotify
-    canciones_playlist = obtener_canciones_de_playlist(URL_PLAYLIST)
-    
-    # 2. Verificar coincidencias y descargar
-    if canciones_playlist:
-        canciones_listas = analizar_y_resolver_coincidencias(canciones_playlist)
-        if canciones_listas:
-            descargar_canciones(canciones_listas)
-            print("🎉 ¡Todas las canciones han sido procesadas y guardadas en .wav!")
+    while True:
+        mostrar_menu()
+        opcion = input("Selecciona una opción (1-2): ").strip()
+        
+        if opcion == "1":
+            url_input = input("\n> Ingrese el enlace o ID de la Playlist de Spotify: ").strip()
+            if url_input:
+                canciones = obtener_canciones_de_playlist(url_input)
+                if canciones:
+                    canciones_verificadas = analizar_y_resolver_coincidencias(canciones)
+                    if canciones_verificadas:
+                        descargar_canciones(canciones_verificadas)
+                        print("🎉 ¡Proceso finalizado con éxito!\n")
+            else:
+                print("⚠️ No ingresaste ningún enlace.\n")
+        elif opcion == "2":
+            print("\nSaliendo del Agente... ¡Hasta luego!")
+            break
+        else:
+            print("⚠️ Opción no válida. Intenta de nuevo.\n")
