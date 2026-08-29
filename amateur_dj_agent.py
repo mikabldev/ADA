@@ -379,7 +379,7 @@ def descargar_canciones(lista_verificada):
             print(f"  ✓ Recuperada con éxito mediante espejo en YouTube.\n")
             descargadas_ok += 1
         except Exception as ex_final:
-            print(f"  ❌ Error final: No se pudo procesar {nombre_archivo} en ninguna plataforma ({ex_final})\n")
+            print(f"  ✗ Error final: No se pudo procesar {nombre_archivo} en ninguna plataforma ({ex_final})\n")
             fallidas += 1
                 
     return descargadas_ok, fallidas
