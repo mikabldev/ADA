@@ -187,7 +187,7 @@ def analizar_y_resolver_coincidencias(lista_canciones):
         candidatos = buscar_candidatos_multifuente(query_busqueda)
         
         if not candidatos:
-            print(f"  ❌ No se encontraron fuentes públicas para '{query_busqueda}'. Omitiendo.\n")
+            print(f"  🕱︎ No se encontraron fuentes públicas para '{query_busqueda}'. Omitiendo.\n")
             omitidas += 1
             continue
             
@@ -245,7 +245,7 @@ def analizar_y_resolver_coincidencias(lista_canciones):
     return canciones_procesadas, omitidas
 
 # -------------------------------------------------------------------
-# MÓDULO 3: DESCARGA CON SISTEMA DE FALLBACK TRIPLE
+# MÓDULO 3: DESCARGA CON SISTEMA DE FALLBACK TRIPLE (SIN MUTAGEN)
 # -------------------------------------------------------------------
 def descargar_canciones(lista_verificada):
     print("\n∘₊✧─── FASE 2: Descarga en segundo plano y extracción a .WAV ───✧₊∘\n")
@@ -258,11 +258,19 @@ def descargar_canciones(lista_verificada):
         
         ydl_opts = {
             'format': 'bestaudio/best',
-            'postprocessors': [{
-                'key': 'FFmpegExtractAudio',
-                'preferredcodec': 'wav',
-                'preferredquality': '192',
-            }],
+            'match_filter': yt_dlp.utils.match_filter_func('duration <= 600'),
+            'add_metadata': True,  # Incrusta metadatos automáticamente
+            'postprocessors': [
+                {
+                    'key': 'FFmpegExtractAudio',
+                    'preferredcodec': 'wav',
+                    'preferredquality': '192',
+                },
+                {
+                    'key': 'FFmpegMetadata',  # Escribe la información en las propiedades del WAV
+                    'add_chapters': True,
+                }
+            ],
             'outtmpl': os.path.join(DOWNLOADS_FOLDER, f'{nombre_archivo}.%(ext)s'),
             'quiet': True,
             'no_warnings': True,
@@ -274,7 +282,7 @@ def descargar_canciones(lista_verificada):
         try:
             with yt_dlp.YoutubeDL(ydl_opts) as ydl:
                 ydl.download([item['url']])
-            print(f"  ✓ Descarga completada.\n")
+            print(f"  ✓ Descarga completada con metadatos incrustados.\n")
             descargadas_ok += 1
             continue
         except Exception:
