@@ -90,8 +90,8 @@ def obtener_metadatos_ytdlp(url_playlist, plataforma="YouTube / SoundCloud"):
     canciones = []
     
     opts = {
-        'extract_flat': True,  # Lee la lista sin descargar
-        'quiet': True, # Realiza el trabajo en segundo plano
+        'extract_flat': True,
+        'quiet': True,
         'skip_download': True
     }
     
@@ -109,7 +109,6 @@ def obtener_metadatos_ytdlp(url_playlist, plataforma="YouTube / SoundCloud"):
             uploader = (entry.get('uploader') or entry.get('channel') or "Artista Desconocido").strip()
             
             if titulo:
-                # Si el título ya contiene un guion, se asume que incluye 'Artista - Canción'
                 clave = titulo if " - " in titulo else f"{uploader} - {titulo}"
                 canciones.append({
                     'query_limpia': clave,
@@ -125,44 +124,86 @@ def obtener_metadatos_ytdlp(url_playlist, plataforma="YouTube / SoundCloud"):
         return []
 
 # -------------------------------------------------------------------
-# MÓDULO 2: ANÁLISIS DE SIMILITUD Y DESAMBIGUACIÓN
+# MÓDULO 2: ANÁLISIS MULTIFUENTE (YouTube + SoundCloud + Bandcamp)
 # -------------------------------------------------------------------
 def limpiar_texto(texto):
     return re.sub(r'[^\w\s]', '', texto).strip().lower()
 
+def buscar_candidatos_multifuente(query):
+    """
+    Busca candidatos en YouTube, SoundCloud y Bandcamp.
+    """
+    opts = {'quiet': True, 'extract_flat': True}
+    candidatos = []
+    
+    # 1. Búsqueda en YouTube
+    with yt_dlp.YoutubeDL(opts) as ydl:
+        try:
+            res_yt = ydl.extract_info(f"ytsearch2:{query}", download=False)
+            if res_yt and res_yt.get('entries'):
+                candidatos.extend(res_yt['entries'])
+        except Exception:
+            pass
+
+    # 2. Búsqueda en SoundCloud
+    with yt_dlp.YoutubeDL(opts) as ydl:
+        try:
+            res_sc = ydl.extract_info(f"scsearch2:{query}", download=False)
+            if res_sc and res_sc.get('entries'):
+                candidatos.extend(res_sc['entries'])
+        except Exception:
+            pass
+
+    # 3. Búsqueda en Bandcamp (Fallback 2)
+    with yt_dlp.YoutubeDL(opts) as ydl:
+        try:
+            res_bc = ydl.extract_info(f"bcsearch2:{query}", download=False)
+            if res_bc and res_bc.get('entries'):
+                candidatos.extend(res_bc['entries'])
+        except Exception:
+            pass
+
+    return candidatos
+
 def analizar_y_resolver_coincidencias(lista_canciones):
     canciones_procesadas = []
+    omitidas = 0
     print("∘₊✧─── FASE 1: Análisis y verificación de coincidencias ───✧₊∘\n")
     
     for i, item in enumerate(lista_canciones):
         query_busqueda = item['query_limpia']
         print(f"Procesando [{i+1}/{len(lista_canciones)}]: '{query_busqueda}'")
             
-        # Si ya tenemos la URL directa (caso YouTube/SoundCloud), la asignamos
         if item.get('url_directa'):
             canciones_procesadas.append({
                 'url': item['url_directa'],
-                'nombre_salida': item['nombre_salida']
+                'nombre_salida': item['nombre_salida'],
+                'query_original': query_busqueda,
+                'fuente': 'Directa'
             })
             print(f"  ✓ Enlace directo obtenido.\n" + "-" * 65)
             continue
 
-        # Búsqueda de candidatos en fuentes abiertas para consultas de texto
-        opts = {'quiet': True, 'default_search': 'ytsearch3:', 'extract_flat': True}
-        with yt_dlp.YoutubeDL(opts) as ydl:
-            res = ydl.extract_info(query_busqueda, download=False)
-            
-        candidatos = res.get('entries', []) if res else []
+        candidatos = buscar_candidatos_multifuente(query_busqueda)
         
         if not candidatos:
-            print(f"  ❌ No se encontraron fuentes para '{query_busqueda}'. Omitiendo.\n")
+            print(f"  ❌ No se encontraron fuentes públicas para '{query_busqueda}'. Omitiendo.\n")
+            omitidas += 1
             continue
             
         opciones_evaluadas = []
-        for cand in candidatos[:3]:
+        for cand in candidatos[:5]:
             titulo_cand = cand.get('title', '')
-            uploader = cand.get('uploader', 'Artista Desconocido')
+            uploader = cand.get('uploader') or cand.get('channel') or 'Artista Desconocido'
             url = cand.get('url') or cand.get('webpage_url')
+            
+            # Identificación explícita de plataforma
+            if "bandcamp" in url.lower():
+                fuente = "Bandcamp"
+            elif "soundcloud" in url.lower():
+                fuente = "SoundCloud"
+            else:
+                fuente = "YouTube"
             
             score = fuzz.WRatio(limpiar_texto(query_busqueda), limpiar_texto(titulo_cand))
             
@@ -171,22 +212,23 @@ def analizar_y_resolver_coincidencias(lista_canciones):
                 'uploader': uploader,
                 'url': url,
                 'score': score,
-                'nombre_salida': item['nombre_salida']
+                'fuente': fuente,
+                'nombre_salida': item['nombre_salida'],
+                'query_original': query_busqueda
             })
             
         opciones_evaluadas.sort(key=lambda x: x['score'], reverse=True)
         
-        # Alerta interactiva si la similitud es menor al 85%
         if len(opciones_evaluadas) > 1 and opciones_evaluadas[0]['score'] < 85:
             print(f"  (⇀‸↼‶) ¡Alerta de Similitud! 🡪 Diferencia detectada entre metadatos y fuente.")
             print("     Selecciona la opción correcta:")
             
             for idx, opc in enumerate(opciones_evaluadas, start=1):
-                print(f"     [{idx}] {opc['titulo_audio']} | Canal: {opc['uploader']} ({opc['score']:.1f}%)")
+                print(f"     [{idx}] [{opc['fuente']}] {opc['titulo_audio']} | Canal: {opc['uploader']} ({opc['score']:.1f}%)")
                 
             while True:
                 try:
-                    eleccion = int(input("     Selecciona una opción (1-3): "))
+                    eleccion = int(input(f"     Selecciona una opción (1-{len(opciones_evaluadas)}): "))
                     if 1 <= eleccion <= len(opciones_evaluadas):
                         seleccionada = opciones_evaluadas[eleccion - 1]
                         break
@@ -195,18 +237,21 @@ def analizar_y_resolver_coincidencias(lista_canciones):
                 print("     Opción no válida.")
         else:
             seleccionada = opciones_evaluadas[0]
-            print(f"  ♡⃕ Coincidencia validada: '{seleccionada['titulo_audio']}' ({seleccionada['score']:.1f}%)")
+            print(f"  ♡⃕ Coincidencia validada en [{seleccionada['fuente']}]: '{seleccionada['titulo_audio']}' ({seleccionada['score']:.1f}%)")
             
         canciones_procesadas.append(seleccionada)
         print("-" * 65)
         
-    return canciones_procesadas
+    return canciones_procesadas, omitidas
 
 # -------------------------------------------------------------------
-# MÓDULO 3: DESCARGA EN SEGUNDO PLANO Y EXTRACCIÓN A WAV
+# MÓDULO 3: DESCARGA CON SISTEMA DE FALLBACK TRIPLE
 # -------------------------------------------------------------------
 def descargar_canciones(lista_verificada):
     print("\n∘₊✧─── FASE 2: Descarga en segundo plano y extracción a .WAV ───✧₊∘\n")
+    
+    descargadas_ok = 0
+    fallidas = 0
     
     for item in lista_verificada:
         nombre_archivo = re.sub(r'[\\/*?:"<>|]', "", item['nombre_salida'])
@@ -224,26 +269,52 @@ def descargar_canciones(lista_verificada):
         }
         
         print(f"Guardando en 'Descargas ADA': {nombre_archivo}.wav...")
+        
+        # Intento 1: Fuente principal
         try:
             with yt_dlp.YoutubeDL(ydl_opts) as ydl:
                 ydl.download([item['url']])
             print(f"  ✓ Descarga completada.\n")
+            descargadas_ok += 1
+            continue
+        except Exception:
+            print(f"  ⚠️ Error en la fuente principal ({item.get('fuente', 'YouTube')}). Probando Fallback 1: SoundCloud...")
+
+        # Intento 2: Fallback 1 -> SoundCloud
+        try:
+            with yt_dlp.YoutubeDL(ydl_opts) as ydl:
+                ydl.download([f"scsearch1:{item['query_original']}"])
+            print(f"  ✓ Recuperada con éxito desde SoundCloud.\n")
+            descargadas_ok += 1
+            continue
+        except Exception:
+            print(f"  ⚠️ Fallback SoundCloud sin éxito. Probando Fallback 2: Bandcamp...")
+
+        # Intento 3: Fallback 2 -> Bandcamp
+        try:
+            with yt_dlp.YoutubeDL(ydl_opts) as ydl:
+                ydl.download([f"bcsearch1:{item['query_original']}"])
+            print(f"  ✓ Recuperada con éxito desde Bandcamp.\n")
+            descargadas_ok += 1
         except Exception as e:
-            print(f"  ❌ Error al procesar {nombre_archivo}: {e}\n")
+            print(f"  ❌ Error final: No se pudo procesar {nombre_archivo} en ninguna plataforma ({e})\n")
+            fallidas += 1
+                
+    return descargadas_ok, fallidas
 
 # -------------------------------------------------------------------
 # MENÚ INTERACTIVO PRINCIPAL
 # -------------------------------------------------------------------
 def mostrar_menu():
-    print("⁺ " * 60)
+    print("⁺ " * 30)
     print("      WELCOME TO AMATEUR DJ AGENT (ADA) - MUSIC DOWNLOADER")
-    print("⁺ " * 60)
-    print("\n ¿Desde donde descargarás? Nuestras opciones son:")
+    print("⁺ " * 30)
+    print("\n ¿Desde dónde descargarás? Nuestras opciones son:")
     print("  [1] Playlist de Spotify (URL pública)")
     print("  [2] Playlist de YouTube (URL pública / no listada)")
     print("  [3] Playlist de SoundCloud (URL pública / no listada)")
     print("  [4] Ninguna, salir.\n")
-    print("⁺ " * 60)
+    print("⁺ " * 30)
 
 if __name__ == "__main__":
     while True:
@@ -271,10 +342,27 @@ if __name__ == "__main__":
             print("Esa opción no es válida. Intenta nuevamente.\n")
             continue
 
-        # Procesar si hay canciones identificadas
         if canciones_obtenidas:
-            canciones_verificadas = analizar_y_resolver_coincidencias(canciones_obtenidas)
+            total_detectadas = len(canciones_obtenidas)
+            canciones_verificadas, total_omitidas = analizar_y_resolver_coincidencias(canciones_obtenidas)
+            
+            total_exito = 0
+            total_fallidas = 0
+            
             if canciones_verificadas:
-                descargar_canciones(canciones_verificadas)
-                print("(ﾉ>ω<)ﾉ :｡･:*:･ﾟ’★,｡･:*:･ﾟ’☆")
-                print("¡Todas las canciones han sido procesadas correctamente!\n")
+                total_exito, total_fallidas = descargar_canciones(canciones_verificadas)
+            
+            # Resumen real de métricas
+            print("⁺ " * 60)
+            print("         °˖✧◝(⁰▿⁰)◜✧˖° RESUMEN FINAL DEL PROCESO         ")
+            print("⁺ " * 60)
+            print(f"\n  ♫ Canciones detectadas en la lista:  {total_detectadas}")
+            print(f"  ✦ Descargadas con éxito (.WAV):      {total_exito}")
+            print(f"  シ Omitidas (sin fuentes libres):      {total_omitidas}")
+            print(f"  ♱ Fallidas (errores de descarga):    {total_fallidas}")
+            print("⁺ " * 60)
+            
+            if total_exito > 0 and total_fallidas == 0:
+                print(" (ﾉ>ω<)ﾉ :｡･:*:･ﾟ’★,｡･:*:･ﾟ’☆ ¡Proceso completado al 100%!\n")
+            else:
+                print(" (Ó╭╮Ò) El proceso finalizó con algunas advertencias o fallas.\n")
