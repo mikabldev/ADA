@@ -13,7 +13,7 @@ DOWNLOADS_FOLDER = os.path.expanduser("~/Music/Descargas ADA")
 os.makedirs(DOWNLOADS_FOLDER, exist_ok=True)
 
 # -------------------------------------------------------------------
-# MÓDULO 1: EXTRACCIÓN DE METADATOS POR PLATAFORMA
+# MÓDULO 1: EXTRACCIÓN DE METADATOS (PLAYLISTS Y CANCIÓN INDIVIDUAL)
 # -------------------------------------------------------------------
 
 def obtener_metadatos_spotify(url_playlist):
@@ -62,18 +62,13 @@ def obtener_metadatos_spotify(url_playlist):
                 if not titulo or not artista:
                     continue
                 
-                # Decodificar caracteres como \u0026 -> &
                 titulo = html.unescape(titulo)
                 artista = html.unescape(artista)
                 
-                titulo_lower = titulo.lower()
-                artista_lower = artista.lower()
-                
-                # Filtrar si coincide exactamente con el título o creador de la playlist
-                if (titulo_lower == nombre_playlist or 
-                    artista_lower == owner_name or 
-                    "spotify" in artista_lower or 
-                    "user" in artista_lower):
+                if (titulo.lower() == nombre_playlist or 
+                    artista.lower() == owner_name or 
+                    "spotify" in artista.lower() or 
+                    "user" in artista.lower()):
                     continue
                     
                 clave = f"{artista} - {titulo}"
@@ -94,8 +89,6 @@ def obtener_metadatos_spotify(url_playlist):
                     'nombre_salida': clave
                 })
 
-        # SOLUCIÓN DE SEGURIDAD: Si el primer elemento sigue siendo la cabecera/título general de la lista,
-        # cortamos la lista para que empiece en el índice 1 (canciones[1:])
         if canciones and ("spotify" in canciones[0]['query_limpia'].lower() or "user" in canciones[0]['query_limpia'].lower()):
             canciones = canciones[1:]
 
@@ -114,10 +107,8 @@ def obtener_metadatos_ytdlp(url_playlist, plataforma="YouTube / SoundCloud"):
     print(f"\n∘₊✧─── Leyendo metadatos desde {plataforma} ───✧₊∘")
     canciones = []
     
-    # Limpiar basura de rastreo (?si=..., &utm_source=...)
     url_limpia = url_playlist.split("?")[0].strip()
     
-    # Si viene con enlace acortado, resolver redirección
     if "on.soundcloud.com" in url_limpia:
         try:
             res_redir = requests.head(url_limpia, allow_redirects=True, headers={'User-Agent': 'Mozilla/5.0'})
@@ -125,7 +116,6 @@ def obtener_metadatos_ytdlp(url_playlist, plataforma="YouTube / SoundCloud"):
         except Exception:
             pass
 
-    # Para SoundCloud se desactiva extract_flat para forzar la lectura completa de los títulos
     is_soundcloud = "soundcloud.com" in url_limpia.lower()
     
     opts = {
@@ -141,7 +131,6 @@ def obtener_metadatos_ytdlp(url_playlist, plataforma="YouTube / SoundCloud"):
             
         entries = res.get('entries', []) if res else []
         
-        # Si res no es un listado sino un track individual
         if not entries and res:
             entries = [res]
         
@@ -153,7 +142,6 @@ def obtener_metadatos_ytdlp(url_playlist, plataforma="YouTube / SoundCloud"):
             uploader = html.unescape((entry.get('uploader') or entry.get('channel') or entry.get('artist') or "Artista Desconocido").strip())
             
             if titulo:
-                # Armar la clave de búsqueda limpia
                 clave = titulo if " - " in titulo else f"{uploader} - {titulo}"
                 url_cancion = entry.get('webpage_url') or entry.get('url')
                 
@@ -170,20 +158,60 @@ def obtener_metadatos_ytdlp(url_playlist, plataforma="YouTube / SoundCloud"):
         print(f"❌ Error al procesar la playlist de {plataforma}: {e}\n")
         return []
 
+def obtener_metadatos_cancion_unica(url_cancion):
+    """
+    Extrae los metadatos de 1 sola canción desde SoundCloud, YouTube o Bandcamp.
+    """
+    print("\n∘₊✧─── Obteniendo metadatos del enlace individual ───✧₊∘")
+    url_limpia = url_cancion.split("?")[0].strip()
+    
+    if "on.soundcloud.com" in url_limpia:
+        try:
+            res_redir = requests.head(url_limpia, allow_redirects=True, headers={'User-Agent': 'Mozilla/5.0'})
+            url_limpia = res_redir.url.split("?")[0]
+        except Exception:
+            pass
+
+    opts = {'quiet': True, 'no_warnings': True, 'skip_download': True}
+    
+    try:
+        with yt_dlp.YoutubeDL(opts) as ydl:
+            res = ydl.extract_info(url_limpia, download=False)
+            
+        if not res:
+            print("❌ No se pudo extraer información del enlace.")
+            return []
+            
+        titulo = html.unescape(res.get('title', '').strip())
+        uploader = html.unescape((res.get('uploader') or res.get('channel') or res.get('artist') or "Artista Desconocido").strip())
+        
+        clave = titulo if " - " in titulo else f"{uploader} - {titulo}"
+        
+        print(f"  ✓ Canción identificada: '{clave}'\n")
+        return [{
+            'query_limpia': clave,
+            'nombre_salida': clave,
+            'url_directa': url_limpia
+        }]
+        
+    except Exception as e:
+        print(f"❌ Error al procesar el enlace individual: {e}\n")
+        return []
+
 # -------------------------------------------------------------------
-# MÓDULO 2: ANÁLISIS MULTIFUENTE (YouTube + SoundCloud + Bandcamp)
+# MÓDULO 2: ANÁLISIS MULTIFUENTE (YouTube + SoundCloud)
 # -------------------------------------------------------------------
 def limpiar_texto(texto):
     return re.sub(r'[^\w\s]', '', texto).strip().lower()
 
 def buscar_candidatos_multifuente(query):
     """
-    Busca candidatos en YouTube y SoundCloud descartando automáticamente
-    sets o DJ mixes mayores a 10 minutos (600 segundos).
+    Busca candidatos dando prioridad a SoundCloud y silenciando warnings.
     """
     opts = {
         'quiet': True, 
         'no_warnings': True,
+        'ignoreerrors': True,
         'extract_flat': False,
         'match_filter': yt_dlp.utils.match_filter_func('duration <= 600')
     }
@@ -197,23 +225,23 @@ def buscar_candidatos_multifuente(query):
             return False
         return True
 
-    # 1. Búsqueda prioritaria en YouTube
-    with yt_dlp.YoutubeDL(opts) as ydl:
-        try:
-            res_yt = ydl.extract_info(f"ytsearch3:{query}", download=False)
-            if res_yt and res_yt.get('entries'):
-                for e in res_yt['entries']:
-                    if es_track_valido(e):
-                        candidatos.append(e)
-        except Exception:
-            pass
-
-    # 2. Búsqueda en SoundCloud
+    # 1. SoundCloud (Prioridad)
     with yt_dlp.YoutubeDL(opts) as ydl:
         try:
             res_sc = ydl.extract_info(f"scsearch3:{query}", download=False)
             if res_sc and res_sc.get('entries'):
                 for e in res_sc['entries']:
+                    if es_track_valido(e):
+                        candidatos.append(e)
+        except Exception:
+            pass
+
+    # 2. YouTube
+    with yt_dlp.YoutubeDL(opts) as ydl:
+        try:
+            res_yt = ydl.extract_info(f"ytsearch3:{query}", download=False)
+            if res_yt and res_yt.get('entries'):
+                for e in res_yt['entries']:
                     if es_track_valido(e):
                         candidatos.append(e)
         except Exception:
@@ -235,9 +263,9 @@ def analizar_y_resolver_coincidencias(lista_canciones):
                 'url': item['url_directa'],
                 'nombre_salida': item['nombre_salida'],
                 'query_original': query_busqueda,
-                'fuente': 'Directa'
+                'fuente': 'Enlace Directo'
             })
-            print(f"  ✓ Enlace directo obtenido.\n" + "-" * 65)
+            print(f"  ✓ Enlace directo validado.\n" + "-" * 65)
             continue
 
         candidatos = buscar_candidatos_multifuente(query_busqueda)
@@ -324,34 +352,34 @@ def descargar_canciones(lista_verificada):
         
         print(f"Guardando en 'Descargas ADA': {nombre_archivo}.wav...")
         
-        # Intento 1: Fuente seleccionada
+        # Intento 1: Enlace directo ingresado o fuente validada
         try:
             with yt_dlp.YoutubeDL(ydl_opts) as ydl:
                 ydl.download([item['url']])
             print(f"  ✓ Descarga completada.\n")
             descargadas_ok += 1
             continue
-        except Exception:
-            print(f"  ⚠️ Error en fuente ({item.get('fuente', 'Principal')}). Probando Fallback 1: Búsqueda en YouTube...")
+        except Exception as e:
+            print(f"  ⚠️ Error en la URL principal ({e}). Probando Fallback 1: Búsqueda espejo en SoundCloud...")
 
-        # Intento 2: Fallback 1 -> YouTube
-        try:
-            with yt_dlp.YoutubeDL(ydl_opts) as ydl:
-                ydl.download([f"ytsearch1:{item['query_original']}"])
-            print(f"  ✓ Recuperada con éxito desde YouTube.\n")
-            descargadas_ok += 1
-            continue
-        except Exception:
-            print(f"  ⚠️ Fallback YouTube sin éxito. Probando Fallback 2: SoundCloud alternativo...")
-
-        # Intento 3: Fallback 2 -> SoundCloud
+        # Intento 2: Fallback 1 -> SoundCloud
         try:
             with yt_dlp.YoutubeDL(ydl_opts) as ydl:
                 ydl.download([f"scsearch1:{item['query_original']}"])
-            print(f"  ✓ Recuperada con éxito desde SoundCloud.\n")
+            print(f"  ✓ Recuperada con éxito mediante espejo en SoundCloud.\n")
             descargadas_ok += 1
-        except Exception as e:
-            print(f"  ❌ Error final: No se pudo procesar {nombre_archivo} ({e})\n")
+            continue
+        except Exception:
+            print(f"  ⚠️ Fallback SoundCloud sin éxito. Probando Fallback 2: Búsqueda espejo en YouTube...")
+
+        # Intento 3: Fallback 2 -> YouTube
+        try:
+            with yt_dlp.YoutubeDL(ydl_opts) as ydl:
+                ydl.download([f"ytsearch1:{item['query_original']}"])
+            print(f"  ✓ Recuperada con éxito mediante espejo en YouTube.\n")
+            descargadas_ok += 1
+        except Exception as ex_final:
+            print(f"  ❌ Error final: No se pudo procesar {nombre_archivo} en ninguna plataforma ({ex_final})\n")
             fallidas += 1
                 
     return descargadas_ok, fallidas
@@ -367,13 +395,14 @@ def mostrar_menu():
     print("  [1] Playlist de Spotify (URL pública)")
     print("  [2] Playlist de YouTube (URL pública / no listada)")
     print("  [3] Playlist de SoundCloud (URL pública / no listada)")
-    print("  [4] Ninguna, salir.\n")
+    print("  [4] Una sola canción (URL de SoundCloud, YouTube o Bandcamp)")
+    print("  [5] Ninguna, salir.\n")
     print("⁺ " * 30)
 
 if __name__ == "__main__":
     while True:
         mostrar_menu()
-        opcion = input("Selecciona una opción (1-4): ").strip()
+        opcion = input("Selecciona una opción (1-5): ").strip()
         
         canciones_obtenidas = []
         
@@ -390,6 +419,10 @@ if __name__ == "__main__":
             if url_input:
                 canciones_obtenidas = obtener_metadatos_ytdlp(url_input, "SoundCloud")
         elif opcion == "4":
+            url_input = input("\n> Ingrese la URL de la canción (SoundCloud / YouTube / Bandcamp): ").strip()
+            if url_input:
+                canciones_obtenidas = obtener_metadatos_cancion_unica(url_input)
+        elif opcion == "5":
             print("\nSaliendo del agente... ¡Buenas sesiones de DJ!")
             break
         else:
@@ -410,7 +443,7 @@ if __name__ == "__main__":
             print("⁺ " * 30)
             print("         °˖✧◝(⁰▿⁰)◜✧˖° RESUMEN FINAL DEL PROCESO         ")
             print("⁺ " * 30)
-            print(f"\n  ♫ Canciones detectadas en la lista:  {total_detectadas}")
+            print(f"\n  ♫ Canciones detectadas:              {total_detectadas}")
             print(f"  ✦ Descargadas con éxito (.WAV):      {total_exito}")
             print(f"  シ Omitidas (sin fuentes libres):      {total_omitidas}")
             print(f"  ♱ Fallidas (errores de descarga):    {total_fallidas}")
@@ -418,6 +451,5 @@ if __name__ == "__main__":
             
             if total_exito > 0 and total_fallidas == 0:
                 print(" (ﾉ>ω<)ﾉ :｡･:*:･ﾟ’★,｡･:*:･ﾟ’☆ ¡Proceso completado al 100%!\n")
-                print(" " * 50)
             else:
                 print(" (Ó╭╮Ò) El proceso finalizó con algunas advertencias o fallas.\n")
