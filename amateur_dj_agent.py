@@ -19,7 +19,7 @@ def obtener_metadatos_spotify(url_playlist):
     """
     Extrae los metadatos de una playlist pública de Spotify sin API Keys.
     """
-    print("\n=== Leyendo metadatos desde Spotify ===")
+    print("\n∘₊✧─── Leyendo metadatos desde Spotify ───✧₊∘")
     
     if "playlist/" in url_playlist:
         playlist_id = url_playlist.strip().split("playlist/")[1].split("?")[0]
@@ -34,7 +34,7 @@ def obtener_metadatos_spotify(url_playlist):
     try:
         response = requests.get(embed_url, headers=headers)
         if response.status_code != 200:
-            print(f"❌ No se pudo acceder a la playlist de Spotify (HTTP {response.status_code})")
+            print(f"(ᗒᗣᗕ)՞ No fue posible acceder a la playlist de Spotify (HTTP {response.status_code})")
             return []
             
         soup = BeautifulSoup(response.text, 'html.parser')
@@ -86,12 +86,12 @@ def obtener_metadatos_ytdlp(url_playlist, plataforma="YouTube / SoundCloud"):
     """
     Extrae los metadatos de playlists públicas o no listadas de YouTube o SoundCloud.
     """
-    print(f"\n=== Leyendo metadatos desde {plataforma} ===")
+    print(f"\n∘₊✧─── Leyendo metadatos desde {plataforma} ───✧₊∘")
     canciones = []
     
     opts = {
         'extract_flat': True,  # Lee la lista sin descargar
-        'quiet': True,
+        'quiet': True, # Realiza el trabajo en segundo plano
         'skip_download': True
     }
     
@@ -132,7 +132,7 @@ def limpiar_texto(texto):
 
 def analizar_y_resolver_coincidencias(lista_canciones):
     canciones_procesadas = []
-    print("=== FASE 1: Análisis y verificación de coincidencias ===\n")
+    print("∘₊✧─── FASE 1: Análisis y verificación de coincidencias ───✧₊∘\n")
     
     for i, item in enumerate(lista_canciones):
         query_busqueda = item['query_limpia']
@@ -178,7 +178,7 @@ def analizar_y_resolver_coincidencias(lista_canciones):
         
         # Alerta interactiva si la similitud es menor al 85%
         if len(opciones_evaluadas) > 1 and opciones_evaluadas[0]['score'] < 85:
-            print(f"  ⚠️ Alerta de Similitud: Diferencia detectada entre metadatos y fuente.")
+            print(f"  (⇀‸↼‶) ¡Alerta de Similitud! 🡪 Diferencia detectada entre metadatos y fuente.")
             print("     Selecciona la opción correcta:")
             
             for idx, opc in enumerate(opciones_evaluadas, start=1):
@@ -195,7 +195,7 @@ def analizar_y_resolver_coincidencias(lista_canciones):
                 print("     Opción no válida.")
         else:
             seleccionada = opciones_evaluadas[0]
-            print(f"  ✓ Coincidencia validada: '{seleccionada['titulo_audio']}' ({seleccionada['score']:.1f}%)")
+            print(f"  ♡⃕ Coincidencia validada: '{seleccionada['titulo_audio']}' ({seleccionada['score']:.1f}%)")
             
         canciones_procesadas.append(seleccionada)
         print("-" * 65)
@@ -206,7 +206,7 @@ def analizar_y_resolver_coincidencias(lista_canciones):
 # MÓDULO 3: DESCARGA EN SEGUNDO PLANO Y EXTRACCIÓN A WAV
 # -------------------------------------------------------------------
 def descargar_canciones(lista_verificada):
-    print("\n=== FASE 2: Descarga en segundo plano y extracción a .WAV ===\n")
+    print("\n∘₊✧─── FASE 2: Descarga en segundo plano y extracción a .WAV ───✧₊∘\n")
     
     for item in lista_verificada:
         nombre_archivo = re.sub(r'[\\/*?:"<>|]', "", item['nombre_salida'])
@@ -235,15 +235,15 @@ def descargar_canciones(lista_verificada):
 # MENÚ INTERACTIVO PRINCIPAL
 # -------------------------------------------------------------------
 def mostrar_menu():
-    print("=" * 60)
-    print("      AMATEUR DJ AGENT (ADA) - MUSIC DOWNLOADER")
-    print("=" * 60)
-    print(" Opciones de fuente:")
+    print("⁺ " * 60)
+    print("      WELCOME TO AMATEUR DJ AGENT (ADA) - MUSIC DOWNLOADER")
+    print("⁺ " * 60)
+    print("\n ¿Desde donde descargarás? Nuestras opciones son:")
     print("  [1] Playlist de Spotify (URL pública)")
     print("  [2] Playlist de YouTube (URL pública / no listada)")
     print("  [3] Playlist de SoundCloud (URL pública / no listada)")
-    print("  [4] Salir")
-    print("-" * 60)
+    print("  [4] Ninguna, salir.\n")
+    print("⁺ " * 60)
 
 if __name__ == "__main__":
     while True:
@@ -268,7 +268,7 @@ if __name__ == "__main__":
             print("\nSaliendo del agente... ¡Buenas sesiones de DJ!")
             break
         else:
-            print("⚠️ Opción no válida. Intenta nuevamente.\n")
+            print("Esa opción no es válida. Intenta nuevamente.\n")
             continue
 
         # Procesar si hay canciones identificadas
@@ -276,4 +276,5 @@ if __name__ == "__main__":
             canciones_verificadas = analizar_y_resolver_coincidencias(canciones_obtenidas)
             if canciones_verificadas:
                 descargar_canciones(canciones_verificadas)
-                print("🎉 ¡Todas las canciones han sido procesadas correctamente!\n")
+                print("(ﾉ>ω<)ﾉ :｡･:*:･ﾟ’★,｡･:*:･ﾟ’☆")
+                print("¡Todas las canciones han sido procesadas correctamente!\n")
