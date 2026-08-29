@@ -9,56 +9,62 @@ DOWNLOADS_FOLDER = os.path.expanduser("~/Music/Descargas ADA")
 os.makedirs(DOWNLOADS_FOLDER, exist_ok=True)
 
 def obtener_metadatos_playlist_publica(url_playlist):
-    """
-    Extrae los nombres y artistas de la lista pública de Spotify 
-    mediante scraping ligero de metadatos sin requerir tokens/API Keys.
-    """
-    print("\n=== Leyendo títulos desde la lista pública de Spotify ===")
-    headers = {'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64)'}
+    print("\n=== Leyendo metadatos desde la lista de Spotify ===")
+    
+    # Extraer el ID de la playlist
+    playlist_id = url_playlist.strip().split("playlist/")[1].split("?")[0] if "playlist/" in url_playlist else url_playlist.strip().split("?")[0]
+    
+    # URL del endpoint público embed de Spotify
+    embed_url = f"https://open.spotify.com/embed/playlist/{playlist_id}"
+    
+    headers = {
+        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/115.0.0.0 Safari/537.36'
+    }
     
     try:
-        response = requests.get(url_playlist, headers=headers)
+        response = requests.get(embed_url, headers=headers)
         if response.status_code != 200:
-            print(f"❌ No se pudo acceder a la URL (HTTP {response.status_code})")
+            print(f"❌ No se pudo acceder a la playlist (HTTP {response.status_code})")
             return []
             
         soup = BeautifulSoup(response.text, 'html.parser')
         
-        # Extraer metadatos de las pistas incrustados en la página web
+        # Spotify incrusta el JSON con las pistas dentro de un tag <script id="resource">
+        script_tag = soup.find('script', id='resource')
+        
         canciones = []
-        # Buscar meta tags o estructura básica
-        meta_description = soup.find("meta", name="description")
-        
-        # Scraping de las pistas visibles en la vista pública
-        meta_tracks = soup.find_all("meta", name="music:song")
-        
-        # Alternativa: Buscar directamente etiquetas de títulos
-        track_nodes = soup.find_all("span", dir="auto")
-        
-        # Expresión regular para capturar la estructura básica
-        for item in soup.find_all("meta", property="og:title"):
-            title_text = item.get("content", "")
-            if title_text and "Spotify" not in title_text:
-                print(f"  • Playlist identificada: {title_text}")
-
-        # Extraer mediante expresiones de los datos JSON/HTML estructurados
-        raw_matches = re.findall(r'"name":"([^"]+)".*?"artists":\[{"name":"([^"]+)"', response.text)
-        
-        vistos = set()
-        for titulo, artista in raw_matches:
-            clave = f"{artista} - {titulo}"
-            if clave not in vistos:
-                vistos.add(clave)
+        if script_tag and script_tag.string:
+            import json
+            data = json.loads(script_tag.string)
+            tracks = data.get('tracks', {}).get('items', [])
+            
+            for item in tracks:
+                track = item.get('track', item)
+                titulo = track.get('name')
+                artistas = track.get('artists', [])
+                artista = artistas[0].get('name') if artistas else "Artista Desconocido"
+                
+                if titulo and artista:
+                    clave = f"{artista} - {titulo}"
+                    canciones.append({
+                        'query_limpia': clave,
+                        'nombre_salida': clave
+                    })
+        else:
+            # Respaldo mediante regex sobre el HTML del reproductor embed
+            matches = re.findall(r'"title":"([^"]+)".*?"subtitle":"([^"]+)"', response.text)
+            for titulo, artista in matches:
+                clave = f"{artista} - {titulo}"
                 canciones.append({
                     'query_limpia': clave,
                     'nombre_salida': clave
                 })
-                
-        print(f"  ✓ Se identificaron {len(canciones)} canciones de la lista.\n")
+
+        print(f"  <3 Se identificaron {len(canciones)} canciones únicas en la lista.\n")
         return canciones
 
     except Exception as e:
-        print(f"❌ Error al leer los datos de Spotify: {e}\n")
+        print(f"Error al leer los datos de Spotify: {e}\n")
         return []
 
 def descargar_desde_fuentes_abiertas(lista_canciones):
