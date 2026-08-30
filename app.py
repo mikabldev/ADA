@@ -1,6 +1,7 @@
 import os
 import re
 import html
+import io
 import zipfile
 import base64
 import requests
@@ -10,12 +11,12 @@ import yt_dlp
 import streamlit as st
 
 # -------------------------------------------------------------------
-# CONFIGURACIÓN DE PÁGINA Y RUTAS TEMPORALES
+# CONFIGURACIÓN DE PÁGINA Y RUTA DE DESCARGAS
 # -------------------------------------------------------------------
 st.set_page_config(page_title="Amateur DJ Agent (ADA)", page_icon="🎧", layout="centered")
 
-TEMP_DOWNLOADS_FOLDER = os.path.expanduser("~/Music/Descargas ADA Temp")
-os.makedirs(TEMP_DOWNLOADS_FOLDER, exist_ok=True)
+DOWNLOADS_FOLDER = os.path.expanduser("~/Music/Descargas ADA")
+os.makedirs(DOWNLOADS_FOLDER, exist_ok=True)
 
 # -------------------------------------------------------------------
 # PERSONALIZACIÓN VISUAL: VIDEO DE FONDO Y ESTILOS CSS
@@ -110,17 +111,23 @@ div.stButton > button:first-child:hover {{
 st.markdown(custom_css_and_video, unsafe_allow_html=True)
 
 # -------------------------------------------------------------------
-# MÓDULOS DE EXTRACCIÓN Y BÚSQUEDA
+# MÓDULO 1: EXTRACCIÓN DE METADATOS
 # -------------------------------------------------------------------
 
 def obtener_metadatos_spotify(url_playlist):
+    """
+    Extrae los metadatos de una playlist pública de Spotify decodificando caracteres Unicode
+    y filtrando la cabecera de la lista.
+    """
     if "playlist/" in url_playlist:
         playlist_id = url_playlist.strip().split("playlist/")[1].split("?")[0]
     else:
         playlist_id = url_playlist.strip().split("?")[0]
         
     embed_url = f"https://open.spotify.com/embed/playlist/{playlist_id}"
-    headers = {'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) Chrome/115.0.0.0 Safari/537.36'}
+    headers = {
+        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/115.0.0.0 Safari/537.36'
+    }
     
     try:
         response = requests.get(embed_url, headers=headers)
@@ -138,7 +145,8 @@ def obtener_metadatos_spotify(url_playlist):
             owner_data = data.get('owner', {})
             owner_name = owner_data.get('name', '').strip().lower() if isinstance(owner_data, dict) else ''
             
-            for item in data.get('tracks', {}).get('items', []):
+            tracks = data.get('tracks', {}).get('items', [])
+            for item in tracks:
                 track = item.get('track', item)
                 titulo = track.get('name', '').strip()
                 artistas = track.get('artists', [])
@@ -150,13 +158,30 @@ def obtener_metadatos_spotify(url_playlist):
                 titulo = html.unescape(titulo)
                 artista = html.unescape(artista)
                 
-                if (titulo.lower() == nombre_playlist or artista.lower() == owner_name or 
-                    "spotify" in artista.lower() or "user" in artista.lower()):
+                if (titulo.lower() == nombre_playlist or 
+                    artista.lower() == owner_name or 
+                    "spotify" in artista.lower() or 
+                    "user" in artista.lower()):
                     continue
                     
                 clave = f"{artista} - {titulo}"
-                canciones.append({'query_limpia': clave, 'nombre_salida': clave})
-                
+                canciones.append({
+                    'query_limpia': clave,
+                    'nombre_salida': clave
+                })
+        else:
+            matches = re.findall(r'"title":"([^"]+)".*?"subtitle":"([^"]+)"', response.text)
+            for titulo, artista in matches:
+                titulo_clean = html.unescape(titulo)
+                artista_clean = html.unescape(artista)
+                if "spotify" in artista_clean.lower():
+                    continue
+                clave = f"{artista_clean} - {titulo_clean}"
+                canciones.append({
+                    'query_limpia': clave,
+                    'nombre_salida': clave
+                })
+
         if canciones and ("spotify" in canciones[0]['query_limpia'].lower() or "user" in canciones[0]['query_limpia'].lower()):
             canciones = canciones[1:]
             
@@ -164,9 +189,13 @@ def obtener_metadatos_spotify(url_playlist):
     except Exception:
         return []
 
-def obtener_metadatos_ytdlp(url_input, plataforma):
+def obtener_metadatos_ytdlp(url_playlist, plataforma="YouTube / SoundCloud"):
+    """
+    Extrae los metadatos de playlists de SoundCloud/YouTube soportando
+    sets públicos de SoundCloud, URLs acortadas y parámetros de rastreo.
+    """
     canciones = []
-    url_limpia = url_input.split("?")[0].strip()
+    url_limpia = url_playlist.split("?")[0].strip()
     
     if "on.soundcloud.com" in url_limpia:
         try:
@@ -193,9 +222,11 @@ def obtener_metadatos_ytdlp(url_input, plataforma):
             entries = [res]
             
         for entry in entries:
-            if not entry: continue
+            if not entry:
+                continue
             titulo = html.unescape(entry.get('title', '').strip())
             uploader = html.unescape((entry.get('uploader') or entry.get('channel') or entry.get('artist') or "Artista Desconocido").strip())
+            
             if titulo:
                 clave = titulo if " - " in titulo else f"{uploader} - {titulo}"
                 url_cancion = entry.get('webpage_url') or entry.get('url')
@@ -208,10 +239,51 @@ def obtener_metadatos_ytdlp(url_input, plataforma):
     except Exception:
         return []
 
+def obtener_metadatos_cancion_unica(url_cancion):
+    """
+    Extrae los metadatos de 1 sola canción desde SoundCloud, YouTube o Bandcamp.
+    """
+    url_limpia = url_cancion.split("?")[0].strip()
+    
+    if "on.soundcloud.com" in url_limpia:
+        try:
+            res_redir = requests.head(url_limpia, allow_redirects=True, headers={'User-Agent': 'Mozilla/5.0'})
+            url_limpia = res_redir.url.split("?")[0]
+        except Exception:
+            pass
+
+    opts = {'quiet': True, 'no_warnings': True, 'skip_download': True}
+    
+    try:
+        with yt_dlp.YoutubeDL(opts) as ydl:
+            res = ydl.extract_info(url_limpia, download=False)
+            
+        if not res:
+            return []
+            
+        titulo = html.unescape(res.get('title', '').strip())
+        uploader = html.unescape((res.get('uploader') or res.get('channel') or res.get('artist') or "Artista Desconocido").strip())
+        
+        clave = titulo if " - " in titulo else f"{uploader} - {titulo}"
+        return [{
+            'query_limpia': clave,
+            'nombre_salida': clave,
+            'url_directa': url_limpia
+        }]
+    except Exception:
+        return []
+
+# -------------------------------------------------------------------
+# MÓDULO 2: BÚSQUEDA Y ANÁLISIS MULTIFUENTE
+# -------------------------------------------------------------------
+
 def limpiar_texto(texto):
     return re.sub(r'[^\w\s]', '', texto).strip().lower()
 
 def buscar_candidatos_multifuente(query):
+    """
+    Busca candidatos dando prioridad a SoundCloud y silenciando warnings.
+    """
     opts = {
         'quiet': True, 
         'no_warnings': True, 
@@ -221,22 +293,50 @@ def buscar_candidatos_multifuente(query):
     }
     candidatos = []
     
-    for prefix in ["scsearch3:", "ytsearch3:"]:
-        with yt_dlp.YoutubeDL(opts) as ydl:
-            try:
-                res = ydl.extract_info(f"{prefix}{query}", download=False)
-                if res and res.get('entries'):
-                    candidatos.extend([e for e in res['entries'] if e and (not e.get('duration') or e.get('duration') <= 600)])
-            except Exception:
-                pass
+    def es_track_valido(cand):
+        if not cand:
+            return False
+        dur = cand.get('duration')
+        if dur and dur > 600:
+            return False
+        return True
+
+    # 1. SoundCloud (Prioridad)
+    with yt_dlp.YoutubeDL(opts) as ydl:
+        try:
+            res_sc = ydl.extract_info(f"scsearch3:{query}", download=False)
+            if res_sc and res_sc.get('entries'):
+                for e in res_sc['entries']:
+                    if es_track_valido(e):
+                        candidatos.append(e)
+        except Exception:
+            pass
+
+    # 2. YouTube
+    with yt_dlp.YoutubeDL(opts) as ydl:
+        try:
+            res_yt = ydl.extract_info(f"ytsearch3:{query}", download=False)
+            if res_yt and res_yt.get('entries'):
+                for e in res_yt['entries']:
+                    if es_track_valido(e):
+                        candidatos.append(e)
+        except Exception:
+            pass
+
     return candidatos
 
-def crear_archivo_zip(carpeta_origen, ruta_zip_salida):
-    with zipfile.ZipFile(ruta_zip_salida, 'w', zipfile.ZIP_DEFLATED) as zipf:
-        for root, _, files in os.walk(carpeta_origen):
-            for file in files:
-                if file.endswith('.wav'):
-                    zipf.write(os.path.join(root, file), arcname=file)
+def crear_zip_en_memoria(rutas_archivos):
+    """
+    Empaqueta los archivos descargados en un ZIP almacenado en memoria RAM (io.BytesIO)
+    para evitar duplicar archivos y espacio en el disco duro.
+    """
+    buffer = io.BytesIO()
+    with zipfile.ZipFile(buffer, 'w', zipfile.ZIP_DEFLATED) as zipf:
+        for ruta in rutas_archivos:
+            if os.path.exists(ruta):
+                zipf.write(ruta, arcname=os.path.basename(ruta))
+    buffer.seek(0)
+    return buffer
 
 # -------------------------------------------------------------------
 # INTERFAZ GRÁFICA CON STREAMLIT
@@ -260,13 +360,6 @@ if st.button("🚀 Iniciar Procesamiento", type="primary"):
     if not url_input.strip():
         st.warning("Por favor, ingresa una URL válida.")
     else:
-        # Limpiar descargas temporales previas
-        for f in os.listdir(TEMP_DOWNLOADS_FOLDER):
-            try:
-                os.remove(os.path.join(TEMP_DOWNLOADS_FOLDER, f))
-            except Exception:
-                pass
-
         with st.spinner("°˖✧◝(⁰▿⁰)◜✧˖° Analizando enlace y metadatos..."):
             if "Spotify" in opcion:
                 canciones = obtener_metadatos_spotify(url_input)
@@ -275,7 +368,7 @@ if st.button("🚀 Iniciar Procesamiento", type="primary"):
             elif "SoundCloud" in opcion:
                 canciones = obtener_metadatos_ytdlp(url_input, "SoundCloud")
             else:
-                canciones = obtener_metadatos_ytdlp(url_input, "Canción Única")
+                canciones = obtener_metadatos_cancion_unica(url_input)
 
         if not canciones:
             st.error("(Ó╭╮Ò) No se pudieron identificar canciones en la URL proporcionada.")
@@ -286,83 +379,146 @@ if st.button("🚀 Iniciar Procesamiento", type="primary"):
             status_text = st.empty()
             
             descargadas_ok = 0
+            omitidas = 0
             fallidas = 0
+            archivos_descargados_sesion = []
             
-            ydl_opts = {
-                'format': 'bestaudio/best',
-                'match_filter': yt_dlp.utils.match_filter_func('duration <= 600'),
-                'add_metadata': True,
-                'postprocessors': [
-                    {'key': 'FFmpegExtractAudio', 'preferredcodec': 'wav', 'preferredquality': '192'},
-                    {'key': 'FFmpegMetadata'}
-                ],
-                'outtmpl': os.path.join(TEMP_DOWNLOADS_FOLDER, '%(title)s.%(ext)s'),
-                'quiet': True,
-                'no_warnings': True,
-                'noprogress': True,
-            }
+            with st.expander("📋 Ver registro detallado de canciones", expanded=True):
+                log_container = st.empty()
+                log_lines = []
 
-            for i, item in enumerate(canciones):
-                query = item['query_limpia']
-                nombre_archivo = re.sub(r'[\\/*?:"<>|]', "", item['nombre_salida'])
-                status_text.text(f"Procesando [{i+1}/{len(canciones)}]: {nombre_archivo}")
-                
-                opts_item = dict(ydl_opts)
-                opts_item['outtmpl'] = os.path.join(TEMP_DOWNLOADS_FOLDER, f'{nombre_archivo}.%(ext)s')
-                
-                descargada = False
+                for i, item in enumerate(canciones):
+                    query_busqueda = item['query_limpia']
+                    nombre_archivo = re.sub(r'[\\/*?:"<>|]', "", item['nombre_salida'])
+                    ruta_archivo_wav = os.path.join(DOWNLOADS_FOLDER, f'{nombre_archivo}.wav')
+                    
+                    status_text.text(f"Procesando [{i+1}/{len(canciones)}]: {nombre_archivo[:35]}...")
 
-                # Intento 1: URL directa
-                if item.get('url_directa'):
-                    try:
-                        with yt_dlp.YoutubeDL(opts_item) as ydl:
-                            ydl.download([item['url_directa']])
-                        descargadas_ok += 1
-                        descargada = True
-                    except Exception:
-                        pass
+                    url_objetivo = item.get('url_directa')
+                    fuente_nombre = "Enlace Directo"
 
-                # Fallback 1 & 2: Búsqueda multifuente si falla o no hay URL directa
-                if not descargada:
-                    candidatos = buscar_candidatos_multifuente(query)
-                    if candidatos:
-                        candidatos.sort(key=lambda x: fuzz.WRatio(limpiar_texto(query), limpiar_texto(x.get('title', ''))), reverse=True)
-                        
-                        for cand in candidatos[:3]:
-                            url_cand = cand.get('webpage_url') or cand.get('url')
-                            if url_cand:
-                                try:
-                                    with yt_dlp.YoutubeDL(opts_item) as ydl:
-                                        ydl.download([url_cand])
-                                    descargadas_ok += 1
-                                    descargada = True
-                                    break
-                                except Exception:
-                                    continue
-                                    
-                if not descargada:
-                    fallidas += 1
+                    # Si no hay enlace directo, buscar candidatos multifuente
+                    if not url_objetivo:
+                        candidatos = buscar_candidatos_multifuente(query_busqueda)
+                        if not candidatos:
+                            omitidas += 1
+                            log_lines.append(f"❌ **{query_busqueda}**: Sin fuentes libres encontradas (Omitida)")
+                            log_container.markdown("\n\n".join(log_lines))
+                            progress_bar.progress((i + 1) / len(canciones))
+                            continue
 
-                progress_bar.progress((i + 1) / len(canciones))
+                        # Evaluar similitud con fuzzy matching
+                        opciones_evaluadas = []
+                        for cand in candidatos[:5]:
+                            titulo_cand = cand.get('title', '')
+                            uploader = cand.get('uploader') or cand.get('channel') or 'Artista Desconocido'
+                            url = cand.get('url') or cand.get('webpage_url')
+                            fuente = "SoundCloud" if url and "soundcloud" in url.lower() else "YouTube"
+                            score = fuzz.WRatio(limpiar_texto(query_busqueda), limpiar_texto(titulo_cand))
+
+                            opciones_evaluadas.append({
+                                'titulo': titulo_cand,
+                                'uploader': uploader,
+                                'url': url,
+                                'score': score,
+                                'fuente': fuente
+                            })
+
+                        opciones_evaluadas.sort(key=lambda x: x['score'], reverse=True)
+                        mejor_opcion = opciones_evaluadas[0]
+                        url_objetivo = mejor_opcion['url']
+                        fuente_nombre = f"{mejor_opcion['fuente']} ({mejor_opcion['score']:.0f}% similitud)"
+
+                    # Configuración de descarga con yt-dlp y conversión a WAV directo
+                    ydl_opts = {
+                        'format': 'bestaudio/best',
+                        'match_filter': yt_dlp.utils.match_filter_func('duration <= 600'),
+                        'postprocessors': [{
+                            'key': 'FFmpegExtractAudio',
+                            'preferredcodec': 'wav',
+                            'preferredquality': '192',
+                        }],
+                        'outtmpl': os.path.join(DOWNLOADS_FOLDER, f'{nombre_archivo}.%(ext)s'),
+                        'quiet': True,
+                        'no_warnings': True,
+                        'noprogress': True,
+                    }
+
+                    descarga_exitosa = False
+
+                    # Intento 1: URL Principal / Mejor candidato
+                    if url_objetivo:
+                        try:
+                            with yt_dlp.YoutubeDL(ydl_opts) as ydl:
+                                ydl.download([url_objetivo])
+                            descargadas_ok += 1
+                            descarga_exitosa = True
+                            archivos_descargados_sesion.append(ruta_archivo_wav)
+                            log_lines.append(f"✅ **{nombre_archivo}** → Descargada desde {fuente_nombre}")
+                        except Exception:
+                            pass
+
+                    # Intento 2: Fallback SoundCloud
+                    if not descarga_exitosa:
+                        try:
+                            with yt_dlp.YoutubeDL(ydl_opts) as ydl:
+                                ydl.download([f"scsearch1:{query_busqueda}"])
+                            descargadas_ok += 1
+                            descarga_exitosa = True
+                            archivos_descargados_sesion.append(ruta_archivo_wav)
+                            log_lines.append(f"✅ **{nombre_archivo}** → Descargada vía Fallback SoundCloud")
+                        except Exception:
+                            pass
+
+                    # Intento 3: Fallback YouTube
+                    if not descarga_exitosa:
+                        try:
+                            with yt_dlp.YoutubeDL(ydl_opts) as ydl:
+                                ydl.download([f"ytsearch1:{query_busqueda}"])
+                            descargadas_ok += 1
+                            descarga_exitosa = True
+                            archivos_descargados_sesion.append(ruta_archivo_wav)
+                            log_lines.append(f"✅ **{nombre_archivo}** → Descargada vía Fallback YouTube")
+                        except Exception:
+                            fallidas += 1
+                            log_lines.append(f"⚠️ **{nombre_archivo}** → Error al descargar en todas las fuentes")
+
+                    log_container.markdown("\n\n".join(log_lines))
+                    progress_bar.progress((i + 1) / len(canciones))
 
             status_text.text("¡Proceso completado!")
             
             st.divider()
             st.markdown("### 📊 RESUMEN FINAL DEL PROCESO")
-            col1, col2, col3 = st.columns(3)
+            col1, col2, col3, col4 = st.columns(4)
             col1.metric("♫ Detectadas", len(canciones))
             col2.metric("✦ Descargadas (.WAV)", descargadas_ok)
-            col3.metric("♱ Fallidas", fallidas)
+            col3.metric("シ Omitidas", omitidas)
+            col4.metric("♱ Fallidas", fallidas)
+
+            if descargadas_ok > 0 and fallidas == 0 and omitidas == 0:
+                st.success("🎉 ¡Proceso 100% completado con éxito!")
+            elif descargadas_ok > 0:
+                st.info("El proceso finalizó con algunas canciones omitidas o fallidas.")
 
             if descargadas_ok > 0:
-                zip_path = os.path.join(TEMP_DOWNLOADS_FOLDER, "compilado_dj_ada.zip")
-                crear_archivo_zip(TEMP_DOWNLOADS_FOLDER, zip_path)
+                st.markdown(f"📁 **Canciones guardadas directamente en:** `{DOWNLOADS_FOLDER}`")
                 
-                with open(zip_path, "rb") as f:
+                col_btn1, col_btn2 = st.columns(2)
+                with col_btn1:
+                    if st.button("📂 Abrir Carpeta de Descargas", use_container_width=True):
+                        try:
+                            os.startfile(DOWNLOADS_FOLDER)
+                        except Exception:
+                            pass
+                            
+                with col_btn2:
+                    zip_buffer = crear_zip_en_memoria(archivos_descargados_sesion)
                     st.download_button(
-                        label="📦 Descargar todo (.ZIP)",
-                        data=f,
+                        label="📦 Descargar Compilado (.ZIP)",
+                        data=zip_buffer,
                         file_name="compilado_dj_ada.zip",
                         mime="application/zip",
+                        use_container_width=True,
                         type="primary"
                     )
