@@ -301,7 +301,7 @@ def analizar_y_resolver_coincidencias(lista_canciones):
             
         opciones_evaluadas.sort(key=lambda x: x['score'], reverse=True)
         
-        if len(opciones_evaluadas) > 1 and opciones_evaluadas[0]['score'] < 85:
+        if len(opciones_evaluadas) > 1 and opciones_evaluadas[0]['score'] < 95:
             print(f"  (⇀‸↼‶) ¡Alerta de Similitud! 🡪 Diferencia detectada entre metadatos y fuente.")
             print("     Selecciona la opción correcta:")
             
