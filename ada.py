@@ -395,12 +395,16 @@ def descargar_canciones(lista_verificada):
 # MENÚ INTERACTIVO PRINCIPAL
 # -------------------------------------------------------------------
 def mostrar_menu():
+    print("⁺ " * 30)
     print("      WELCOME TO AMATEUR DJ AGENT (ADA) - MUSIC DOWNLOADER")
+    print("⁺ " * 30)
     print("\n ¿Desde dónde descargarás? Nuestras opciones son:")
     print("  [1] Playlist de Spotify (URL pública)")
     print("  [2] Playlist de YouTube (URL pública / no listada)")
     print("  [3] Playlist de SoundCloud (URL pública / no listada)")
     print("  [4] Una sola canción (URL de SoundCloud, YouTube o Bandcamp)")
+    print("  [5] Ninguna, salir.\n")
+    print("⁺ " * 30)
 
 if __name__ == "__main__":
     while True:
@@ -444,7 +448,7 @@ if __name__ == "__main__":
             
             # Resumen real de métricas
             print("⁺ " * 30)
-            print("Resumen del proceso")
+            print("        °˖✧◝(⁰▿⁰)◜✧˖°   RESUMEN FINAL DEL PROCESO  °˖✧◝(⁰▿⁰)◜✧˖°")
             print("⁺ " * 30)
             print(f"\n  ♫ Canciones detectadas:              {total_detectadas}")
             print(f"  ✦ Descargadas con éxito (.WAV):      {total_exito}")
@@ -453,7 +457,7 @@ if __name__ == "__main__":
             print("⁺ " * 30)
             
             if total_exito > 0 and total_fallidas == 0:
-                print("¡Proceso completado en un 100%!")
+                print(" ⊱ ────── {.⋅ ♫  𝑷𝑹𝑶𝑪𝑬𝑺𝑶 𝟏𝟎𝟎% 𝑪𝑶𝑴𝑷𝑳𝑬𝑻𝑨𝑫𝑶 (ﾉ>ω<)ﾉ  ♫ ⋅.} ───── ⊰ \n")
             else:
-                print("El proceso finalizó con algunas advertencias o fallas.\n")
-                
+                print(" (Ó╭╮Ò) El proceso finalizó con algunas advertencias o fallas.\n")
+                # (ﾉ>ω<)ﾉ 
