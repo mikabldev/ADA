@@ -114,77 +114,169 @@ st.markdown(custom_css_and_video, unsafe_allow_html=True)
 # MÓDULO 1: EXTRACCIÓN DE METADATOS
 # -------------------------------------------------------------------
 
+def decodificar_texto(texto):
+    """
+    Decodifica entidades HTML y secuencias de escape unicode (ej: \\u003c3, \\u00f8).
+    """
+    if not texto:
+        return ""
+    t = html.unescape(str(texto))
+    try:
+        if "\\u" in t:
+            t = re.sub(r'\\u([0-9a-fA-F]{4})', lambda m: chr(int(m.group(1), 16)), t)
+    except Exception:
+        pass
+    return t.strip()
+
 def obtener_metadatos_spotify(url_playlist):
     """
     Extrae los metadatos de una playlist pública de Spotify decodificando caracteres Unicode
-    y filtrando la cabecera de la lista.
+    y filtrando estrictamente la cabecera de la lista.
+    Utiliza la API web de Spotify con token anónimo oficial y fallback a embed HTML con cabeceras completas.
     """
     if "playlist/" in url_playlist:
         playlist_id = url_playlist.strip().split("playlist/")[1].split("?")[0]
     else:
         playlist_id = url_playlist.strip().split("?")[0]
-        
-    embed_url = f"https://open.spotify.com/embed/playlist/{playlist_id}"
-    headers = {
-        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/115.0.0.0 Safari/537.36'
+
+    headers_browser = {
+        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36',
+        'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8',
+        'Accept-Language': 'es-ES,es;q=0.9,en;q=0.8',
+        'Referer': 'https://open.spotify.com/',
+        'Sec-Fetch-Dest': 'document',
+        'Sec-Fetch-Mode': 'navigate',
+        'Sec-Fetch-Site': 'same-origin',
     }
-    
+
+    canciones = []
+
+    # 1. INTENTO 1: API Oficial de Spotify con Token Web Anónimo (Evita HTTP 403)
     try:
-        response = requests.get(embed_url, headers=headers)
+        token_res = requests.get("https://open.spotify.com/get_access_token", headers=headers_browser, timeout=10)
+        if token_res.status_code == 200:
+            token_data = token_res.json()
+            access_token = token_data.get("accessToken")
+            if access_token:
+                api_headers = {
+                    'Authorization': f'Bearer {access_token}',
+                    'User-Agent': headers_browser['User-Agent']
+                }
+                api_url = f"https://api.spotify.com/v1/playlists/{playlist_id}?fields=name,owner,tracks.items(track(name,artists(name)))"
+                api_res = requests.get(api_url, headers=api_headers, timeout=10)
+                if api_res.status_code == 200:
+                    api_json = api_res.json()
+                    nombre_playlist = decodificar_texto(api_json.get('name', '')).lower()
+                    tracks_items = api_json.get('tracks', {}).get('items', [])
+                    for item in tracks_items:
+                        track = item.get('track')
+                        if not track or not isinstance(track, dict):
+                            continue
+                        titulo = decodificar_texto(track.get('name', ''))
+                        artistas = track.get('artists', [])
+                        artista = decodificar_texto(artistas[0].get('name', '')) if artistas else ""
+                        
+                        if not titulo or not artista or titulo.lower() == nombre_playlist:
+                            continue
+                            
+                        clave = f"{artista} - {titulo}"
+                        canciones.append({
+                            'query_limpia': clave,
+                            'nombre_salida': clave
+                        })
+                    if canciones:
+                        return canciones
+    except Exception:
+        pass
+
+    # 2. INTENTO 2: Embed HTML con cabeceras de navegador completas
+    embed_url = f"https://open.spotify.com/embed/playlist/{playlist_id}"
+    try:
+        response = requests.get(embed_url, headers=headers_browser, timeout=10)
         if response.status_code != 200:
             return []
             
         soup = BeautifulSoup(response.text, 'html.parser')
-        script_tag = soup.find('script', id='resource')
         
-        canciones = []
+        meta_title = soup.find('meta', property='og:title')
+        nombre_playlist_meta = decodificar_texto(meta_title['content']).lower() if meta_title and meta_title.get('content') else ""
+        
+        meta_creator = soup.find('meta', property='music:creator') or soup.find('meta', name='author')
+        creador_playlist_meta = decodificar_texto(meta_creator['content']).lower() if meta_creator and meta_creator.get('content') else ""
+        
+        script_tag = soup.find('script', id='resource') or soup.find('script', id='initial-state') or soup.find('script', id='__NEXT_DATA__')
+        
         if script_tag and script_tag.string:
             import json
-            data = json.loads(script_tag.string)
-            nombre_playlist = data.get('name', '').strip().lower()
-            owner_data = data.get('owner', {})
-            owner_name = owner_data.get('name', '').strip().lower() if isinstance(owner_data, dict) else ''
-            
-            tracks = data.get('tracks', {}).get('items', [])
-            for item in tracks:
-                track = item.get('track', item)
-                titulo = track.get('name', '').strip()
-                artistas = track.get('artists', [])
-                artista = artistas[0].get('name', '').strip() if artistas else ""
-                
-                if not titulo or not artista:
-                    continue
+            try:
+                data = json.loads(script_tag.string)
+                if 'props' in data and 'pageProps' in data.get('props', {}):
+                    data = data['props']['pageProps'].get('state', {}).get('data', {}).get('entity', data)
                     
-                titulo = html.unescape(titulo)
-                artista = html.unescape(artista)
+                nombre_playlist = decodificar_texto(data.get('name', '') or data.get('title', '')).lower() or nombre_playlist_meta
+                owner_data = data.get('owner', {})
+                owner_name = decodificar_texto(owner_data.get('name', '') or owner_data.get('display_name', '') or owner_data.get('id', '')).lower() if isinstance(owner_data, dict) else creador_playlist_meta
                 
-                if (titulo.lower() == nombre_playlist or 
-                    artista.lower() == owner_name or 
-                    "spotify" in artista.lower() or 
-                    "user" in artista.lower()):
-                    continue
+                tracks = data.get('tracks', {}).get('items', []) if isinstance(data.get('tracks'), dict) else (data.get('trackList') or [])
+                
+                for item in tracks:
+                    track = item.get('track', item)
+                    if not isinstance(track, dict):
+                        continue
+                        
+                    titulo = decodificar_texto(track.get('name', '') or track.get('title', ''))
+                    artistas = track.get('artists', [])
+                    if isinstance(artistas, list) and artistas:
+                        if isinstance(artistas[0], dict):
+                            artista = decodificar_texto(artistas[0].get('name', ''))
+                        else:
+                            artista = decodificar_texto(str(artistas[0]))
+                    else:
+                        artista = decodificar_texto(track.get('subtitle', '') or track.get('artist', ''))
                     
-                clave = f"{artista} - {titulo}"
-                canciones.append({
-                    'query_limpia': clave,
-                    'nombre_salida': clave
-                })
-        else:
+                    if not titulo or not artista:
+                        continue
+                    
+                    t_low = titulo.lower()
+                    a_low = artista.lower()
+                    
+                    if (t_low == nombre_playlist or t_low == nombre_playlist_meta or 
+                        (a_low == owner_name and t_low == nombre_playlist) or 
+                        (a_low == creador_playlist_meta and t_low == nombre_playlist) or
+                        a_low in ["spotify", "user", "playlist"]):
+                        continue
+                        
+                    clave = f"{artista} - {titulo}"
+                    canciones.append({
+                        'query_limpia': clave,
+                        'nombre_salida': clave
+                    })
+            except Exception:
+                pass
+
+        if not canciones:
             matches = re.findall(r'"title":"([^"]+)".*?"subtitle":"([^"]+)"', response.text)
-            for titulo, artista in matches:
-                titulo_clean = html.unescape(titulo)
-                artista_clean = html.unescape(artista)
-                if "spotify" in artista_clean.lower():
+            for idx, (titulo, artista) in enumerate(matches):
+                titulo_clean = decodificar_texto(titulo)
+                artista_clean = decodificar_texto(artista)
+                
+                t_low = titulo_clean.lower()
+                a_low = artista_clean.lower()
+                
+                if idx == 0 and (t_low == nombre_playlist_meta or a_low in ["spotify", "user", "playlist"] or len(matches) > 1):
                     continue
+                    
+                if (t_low == nombre_playlist_meta or 
+                    (creador_playlist_meta and a_low == creador_playlist_meta) or 
+                    a_low in ["spotify", "user", "playlist"]):
+                    continue
+                    
                 clave = f"{artista_clean} - {titulo_clean}"
                 canciones.append({
                     'query_limpia': clave,
                     'nombre_salida': clave
                 })
 
-        if canciones and ("spotify" in canciones[0]['query_limpia'].lower() or "user" in canciones[0]['query_limpia'].lower()):
-            canciones = canciones[1:]
-            
         return canciones
     except Exception:
         return []
@@ -210,7 +302,10 @@ def obtener_metadatos_ytdlp(url_playlist, plataforma="YouTube / SoundCloud"):
         'extract_flat': False if is_soundcloud else 'in_playlist',
         'quiet': True,
         'no_warnings': True,
-        'skip_download': True
+        'skip_download': True,
+        'extractor_args': {
+            'youtube': {'player_client': ['android', 'ios', 'web']}
+        }
     }
     
     try:
@@ -224,8 +319,8 @@ def obtener_metadatos_ytdlp(url_playlist, plataforma="YouTube / SoundCloud"):
         for entry in entries:
             if not entry:
                 continue
-            titulo = html.unescape(entry.get('title', '').strip())
-            uploader = html.unescape((entry.get('uploader') or entry.get('channel') or entry.get('artist') or "Artista Desconocido").strip())
+            titulo = decodificar_texto(entry.get('title', '').strip())
+            uploader = decodificar_texto((entry.get('uploader') or entry.get('channel') or entry.get('artist') or "Artista Desconocido").strip())
             
             if titulo:
                 clave = titulo if " - " in titulo else f"{uploader} - {titulo}"
@@ -252,7 +347,14 @@ def obtener_metadatos_cancion_unica(url_cancion):
         except Exception:
             pass
 
-    opts = {'quiet': True, 'no_warnings': True, 'skip_download': True}
+    opts = {
+        'quiet': True, 
+        'no_warnings': True, 
+        'skip_download': True,
+        'extractor_args': {
+            'youtube': {'player_client': ['android', 'ios', 'web']}
+        }
+    }
     
     try:
         with yt_dlp.YoutubeDL(opts) as ydl:
@@ -261,8 +363,8 @@ def obtener_metadatos_cancion_unica(url_cancion):
         if not res:
             return []
             
-        titulo = html.unescape(res.get('title', '').strip())
-        uploader = html.unescape((res.get('uploader') or res.get('channel') or res.get('artist') or "Artista Desconocido").strip())
+        titulo = decodificar_texto(res.get('title', '').strip())
+        uploader = decodificar_texto((res.get('uploader') or res.get('channel') or res.get('artist') or "Artista Desconocido").strip())
         
         clave = titulo if " - " in titulo else f"{uploader} - {titulo}"
         return [{
@@ -278,7 +380,26 @@ def obtener_metadatos_cancion_unica(url_cancion):
 # -------------------------------------------------------------------
 
 def limpiar_texto(texto):
-    return re.sub(r'[^\w\s]', '', texto).strip().lower()
+    t = re.sub(r'[^\w\s]', ' ', texto)
+    return ' '.join(t.split()).lower()
+
+def calcular_similitud(query, titulo_cand, uploader=""):
+    q_clean = limpiar_texto(query)
+    t_clean = limpiar_texto(titulo_cand)
+    u_clean = limpiar_texto(uploader)
+    
+    score_token_set = fuzz.token_set_ratio(q_clean, t_clean)
+    score_token_sort = fuzz.token_sort_ratio(q_clean, t_clean)
+    score_wratio = fuzz.WRatio(q_clean, t_clean)
+    score_titulo = max(score_token_set, score_token_sort, score_wratio)
+    
+    combo_cand = f"{u_clean} {t_clean}".strip()
+    score_combo_set = fuzz.token_set_ratio(q_clean, combo_cand)
+    score_combo_sort = fuzz.token_sort_ratio(q_clean, combo_cand)
+    score_combo_wratio = fuzz.WRatio(q_clean, combo_cand)
+    score_combo = max(score_combo_set, score_combo_sort, score_combo_wratio)
+    
+    return max(score_titulo, score_combo)
 
 def buscar_candidatos_multifuente(query):
     """
@@ -289,7 +410,10 @@ def buscar_candidatos_multifuente(query):
         'no_warnings': True, 
         'ignoreerrors': True,
         'extract_flat': False, 
-        'match_filter': yt_dlp.utils.match_filter_func('duration <= 600')
+        'match_filter': yt_dlp.utils.match_filter_func('duration <= 600'),
+        'extractor_args': {
+            'youtube': {'player_client': ['android', 'ios', 'web']}
+        }
     }
     candidatos = []
     
@@ -414,7 +538,7 @@ if st.button("🚀 Iniciar Procesamiento", type="primary"):
                             uploader = cand.get('uploader') or cand.get('channel') or 'Artista Desconocido'
                             url = cand.get('url') or cand.get('webpage_url')
                             fuente = "SoundCloud" if url and "soundcloud" in url.lower() else "YouTube"
-                            score = fuzz.WRatio(limpiar_texto(query_busqueda), limpiar_texto(titulo_cand))
+                            score = calcular_similitud(query_busqueda, titulo_cand, uploader)
 
                             opciones_evaluadas.append({
                                 'titulo': titulo_cand,
@@ -433,6 +557,9 @@ if st.button("🚀 Iniciar Procesamiento", type="primary"):
                     ydl_opts = {
                         'format': 'bestaudio/best',
                         'match_filter': yt_dlp.utils.match_filter_func('duration <= 600'),
+                        'extractor_args': {
+                            'youtube': {'player_client': ['android', 'ios', 'web']}
+                        },
                         'postprocessors': [{
                             'key': 'FFmpegExtractAudio',
                             'preferredcodec': 'wav',
