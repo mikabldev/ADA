@@ -1,0 +1,55 @@
+/* Video de fondo a pantalla completa */
+#bg-video {
+    position: fixed;
+    right: 0;
+    bottom: 0;
+    min-width: 100%;
+    min-height: 100%;
+    z-index: -2;
+    object-fit: cover;
+    filter: brightness(0.75) contrast(1.05);
+}
+
+/* Capa de degradado sobre el video */
+.video-overlay {
+    position: fixed;
+    top: 0;
+    left: 0;
+    width: 100%;
+    height: 100%;
+    background: rgba(15, 15, 20, 0.35);
+    z-index: -1;
+}
+
+/* Fondo transparente en la estructura de Streamlit */
+.stApp {
+    background: transparent;
+}
+
+/* Personalizacion de tarjetas y contenedores */
+div[data-testid="stVerticalBlock"] > div {
+    border-radius: 12px;
+}
+
+/* Personalizacion de titulos */
+h1 {
+    color: #00F0FF !important;
+    text-shadow: 0 0 10px rgba(0, 240, 255, 0.5);
+    font-family: 'Trebuchet MS', sans-serif;
+}
+
+/* Boton principal estilo Cyberpunk / DJ */
+div.stButton > button:first-child {
+    background: linear-gradient(135deg, #7928CA 0%, #FF0080 100%);
+    color: white;
+    border: none;
+    border-radius: 8px;
+    font-weight: bold;
+    box-shadow: 0 4px 15px rgba(255, 0, 128, 0.4);
+    transition: all 0.3s ease;
+}
+
+div.stButton > button:first-child:hover {
+    transform: translateY(-2px);
+    box-shadow: 0 6px 20px rgba(255, 0, 128, 0.6);
+}
