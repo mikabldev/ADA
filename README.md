@@ -24,7 +24,7 @@ ADA identifica canciones desde una playlist o URL, busca fuentes publicas compat
 - Etiqueta los WAV con artista, titulo y album cuando es posible.
 - Guarda todo en `~/Music/Descargas ADA`.
 - En la interfaz web, permite descargar un ZIP en memoria con los archivos nuevos de la sesion.
-- En la interfaz web, incluye fondo de video local desde `utils/media/*.mp4` y estilos personalizados en `style.css`.
+- En la interfaz web, incluye fondo de video local desde `assets/backgrounds/*.mp4` y estilos personalizados en `style.css`.
 
 ## Instalacion
 
@@ -107,7 +107,11 @@ ADA (Amateur Dj Agent)/
 |-- app.py                 # Interfaz web con Streamlit
 |-- style.css              # Estilos visuales de Streamlit
 |-- requirements.txt       # Dependencias Python
-`-- utils/media/*.mp4      # Videos locales para el fondo de la app web
+`-- assets/
+    |-- backgrounds/*.mp4  # Videos locales para el fondo de la app web
+    |-- animations/        # Loaders visuales y animaciones de interfaz
+    |-- images/            # Imagenes estaticas
+    `-- icons/             # Iconos propios
 ```
 
 ## Como funciona

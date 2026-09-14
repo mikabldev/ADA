@@ -26,6 +26,14 @@ st.set_page_config(page_title="Amateur DJ Agent (ADA)", page_icon="🎧", layout
 # -------------------------------------------------------------------
 # PERSONALIZACIÓN VISUAL: VIDEO DE FONDO Y ESTILOS CSS
 # -------------------------------------------------------------------
+ASSETS_FOLDER = "assets"
+BACKGROUNDS_FOLDER = os.path.join(ASSETS_FOLDER, "backgrounds")
+ANIMATIONS_FOLDER = os.path.join(ASSETS_FOLDER, "animations")
+LOADING_ANIMATION = os.path.join(ANIMATIONS_FOLDER, "loading_dj.gif")
+# Para usar varios loaders, guarda varios GIF/MP4 en assets/animations
+# y cambia LOADING_ANIMATION por:
+# LOADING_ANIMATION = random.choice(glob.glob(os.path.join(ANIMATIONS_FOLDER, "loading_*.*")))
+
 def obtener_video_local_base64(ruta_archivo):
     """
     Lee un archivo de video local y lo convierte a Base64.
@@ -36,7 +44,7 @@ def obtener_video_local_base64(ruta_archivo):
         return base64.b64encode(bytes_video).decode("utf-8")
     return None
 
-RUTAS_VIDEO_LOCAL = glob.glob(os.path.join("utils", "media", "*.mp4"))
+RUTAS_VIDEO_LOCAL = glob.glob(os.path.join(BACKGROUNDS_FOLDER, "*.mp4"))
 RUTA_VIDEO_LOCAL = random.choice(RUTAS_VIDEO_LOCAL) if RUTAS_VIDEO_LOCAL else None
 video_base64 = obtener_video_local_base64(RUTA_VIDEO_LOCAL) if RUTA_VIDEO_LOCAL else None
 RUTA_CSS = "style.css"
@@ -69,7 +77,14 @@ st.markdown(custom_css_and_video, unsafe_allow_html=True)
 # INTERFAZ GRÁFICA CON STREAMLIT
 # -------------------------------------------------------------------
 st.title("🎧 Amateur DJ Agent (ADA)")
-st.caption("Convertidor y descargador inteligente de música a .WAV")
+st.markdown(
+    """
+    <p class="app-caption">
+        ADA analiza playlists o enlaces musicales, encuentra fuentes públicas y prepara archivos WAV etiquetados para organizar tu biblioteca DJ.
+    </p>
+    """,
+    unsafe_allow_html=True
+)
 
 opcion = st.selectbox(
     "¿Qué deseas descargar?",
@@ -84,10 +99,16 @@ opcion = st.selectbox(
 url_input = st.text_input("Ingresa la URL:", placeholder="https://...")
 calidad_audio = st.selectbox("Calidad de audio:", list(CALIDADES_AUDIO.keys()), index=1)
 
-if st.button("🚀 Analizar canciones", type="primary"):
+if st.button("Analizar canciones", type="primary"):
     if not url_input.strip():
         st.warning("Por favor, ingresa una URL válida.")
     else:
+        # Loader visual opcional:
+        # 1. Guarda un GIF en assets/animations/loading_dj.gif
+        # 2. Descomenta estas lineas y el loading_placeholder.empty() de abajo.
+        # loading_placeholder = st.empty()
+        # if os.path.exists(LOADING_ANIMATION):
+        #     loading_placeholder.image(LOADING_ANIMATION, width=220)
         with st.spinner("Analizando enlace y metadatos..."):
             if "Spotify" in opcion:
                 canciones = obtener_metadatos_spotify(url_input)
@@ -97,6 +118,7 @@ if st.button("🚀 Analizar canciones", type="primary"):
                 canciones = obtener_metadatos_ytdlp(url_input, "SoundCloud")
             else:
                 canciones = obtener_metadatos_cancion_unica(url_input)
+        # loading_placeholder.empty()
 
         if not canciones:
             st.error("(Ó╭╮Ò) No se pudieron identificar canciones en la URL proporcionada.")
@@ -127,6 +149,10 @@ if "canciones_detectadas" in st.session_state and st.session_state["canciones_de
             seleccionadas.append(item)
 
     if st.button("Descargar canciones seleccionadas", type="primary", disabled=not seleccionadas):
+        # Loader visual opcional para descargas:
+        # loading_placeholder = st.empty()
+        # if os.path.exists(LOADING_ANIMATION):
+        #     loading_placeholder.image(LOADING_ANIMATION, width=220)
         progress_bar = st.progress(0)
         status_text = st.empty()
         resultados = []
@@ -151,6 +177,7 @@ if "canciones_detectadas" in st.session_state and st.session_state["canciones_de
                     progress_bar.progress(completadas / len(seleccionadas))
 
         status_text.text("¡Proceso completado!")
+        # loading_placeholder.empty()
         descargadas_ok = sum(1 for r in resultados if r['estado'] == 'descargada')
         omitidas_existentes = sum(1 for r in resultados if r['estado'] == 'omitida_existente')
         omitidas = sum(1 for r in resultados if r['estado'] == 'omitida')
