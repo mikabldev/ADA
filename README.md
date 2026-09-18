@@ -145,17 +145,21 @@ En CLI tambien puedes previsualizar canciones, excluir indices, elegir calidad y
 
 ```text
 ADA (Amateur Dj Agent)/
-|-- ada.py                 # Interfaz de consola
-|-- ada_core.py            # Logica compartida: metadatos, busqueda, descarga, WAV, ZIP
-|-- amateur_dj_agent.py    # Alias de compatibilidad que ejecuta la CLI
-|-- app.py                 # Interfaz web con Streamlit
-|-- style.css              # Estilos visuales de Streamlit
-|-- requirements.txt       # Dependencias Python
-`-- assets/
-    |-- backgrounds/*.mp4  # Videos locales para el fondo de la app web
-    |-- animations/        # Loaders visuales y animaciones de interfaz
-    |-- images/            # Imagenes estaticas
-    `-- icons/             # Iconos propios
+|-- app.py                   # Interfaz Streamlit compatible
+|-- ada.py                   # Interfaz CLI compatible
+|-- amateur_dj_agent.py      # Alias de la CLI
+|-- ada_core.py              # Fachada de dominio compartida
+|-- ada_audio/               # Análisis acústico local
+|-- ada_backend/             # API, jobs y almacenamiento
+|-- frontend/                # Cliente React/Vite y Nginx
+|-- tests/                   # Pruebas automatizadas
+|-- assets/                  # Recursos visuales agrupados
+|-- docs/                    # Arquitectura y documentación interna
+|-- .agents/                 # Orquestador, especialistas y prompts
+|-- Dockerfile
+|-- compose.yaml
+|-- requirements.txt
+`-- README.md
 ```
 
 ## Como funciona
@@ -172,7 +176,7 @@ Vista previa y seleccion de canciones
       |
       v
 Resolucion de fuente
-URL directa -> SoundCloud search -> YouTube search
+URL directa -> Bandcamp -> SoundCloud -> YouTube
       |
       v
 Validacion
