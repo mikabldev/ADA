@@ -79,7 +79,7 @@ cd frontend && npm test && npm run build
 docker compose config
 ```
 
-Consulta [ARCHITECTURE.md](ARCHITECTURE.md) para decisiones de almacenamiento, límites, seguridad y opciones de despliegue.
+Consulta [la documentación de arquitectura](docs/architecture.md) para decisiones de almacenamiento, límites, seguridad y opciones de despliegue.
 
 ### Interfaz web
 

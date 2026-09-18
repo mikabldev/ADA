@@ -1,0 +1,11 @@
+.git
+.venv
+__pycache__
+*.py[cod]
+.cache
+.env
+.pytest_cache
+.ruff_cache
+.ada-data
+frontend/node_modules
+frontend/dist
