@@ -49,6 +49,38 @@ source .venv/bin/activate
 
 ## Uso
 
+### MVP React + FastAPI (recomendado)
+
+```bash
+docker compose up --build
+```
+
+Abre `http://localhost:8080`. El frontend sólo consume HTTP; `yt-dlp` y FFmpeg se ejecutan en el backend. Copia `.env.example` a `.env` para ajustar TTL, concurrencia, tamaño y tiempo máximo.
+
+Sin Docker:
+
+```bash
+python -m pip install -r requirements.txt
+uvicorn ada_backend.api:app --reload
+cd frontend
+npm install
+npm run dev
+```
+
+La API expone `POST /api/v1/analyze`, `POST /api/v1/jobs`, `GET/DELETE /api/v1/jobs/{id}` y `GET /api/v1/jobs/{id}/download`. La documentación interactiva queda en `http://localhost:8000/docs`.
+
+### Desarrollo y validación
+
+```bash
+python -m unittest discover -s tests -v
+python -m compileall ada_core.py ada.py app.py ada_backend tests
+ruff check .
+cd frontend && npm test && npm run build
+docker compose config
+```
+
+Consulta [ARCHITECTURE.md](ARCHITECTURE.md) para decisiones de almacenamiento, límites, seguridad y opciones de despliegue.
+
 ### Interfaz web
 
 ```bash
@@ -66,6 +98,10 @@ Flujo principal:
 5. Revisa la vista previa y marca las canciones que quieres descargar.
 6. Presiona **Descargar canciones seleccionadas**.
 7. Al finalizar, revisa el resumen y descarga el ZIP si lo necesitas.
+
+Antes de descargar, ADA compara candidatos por título, artista, duración, términos de versión y prioridad de fuente. El orden predeterminado es Bandcamp, SoundCloud y YouTube. Las coincidencias ambiguas quedan en una cola de revisión para que el usuario abra la fuente y elija la versión; una elección confirmada nunca se sustituye silenciosamente por otra fuente.
+
+La rueda **Ajustes de verificación** permite cambiar el modo automático/equilibrado/estricto, el orden de fuentes, tolerancia de duración, similitud mínima, margen de ambigüedad y número de candidatos.
 
 ### CLI
 

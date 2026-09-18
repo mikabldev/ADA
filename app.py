@@ -7,9 +7,11 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 import streamlit as st
 
 from ada_core import (
+    AJUSTES_VERIFICACION_DEFAULT,
     CALIDADES_AUDIO,
     DOWNLOADS_FOLDER,
     MAX_WORKERS_DESCARGA,
+    analizar_coincidencia,
     crear_zip_en_memoria,
     descargar_item,
     dividir_artista_titulo,
@@ -73,6 +75,10 @@ custom_css_and_video = f"""
 # Inyectar la personalización en la app
 st.markdown(custom_css_and_video, unsafe_allow_html=True)
 
+st.session_state.setdefault("revision_pendiente", [])
+st.session_state.setdefault("resultados_descarga", [])
+st.session_state.setdefault("calidad_trabajo", None)
+
 # -------------------------------------------------------------------
 # INTERFAZ GRÁFICA CON STREAMLIT
 # -------------------------------------------------------------------
@@ -86,6 +92,31 @@ st.markdown(
     unsafe_allow_html=True
 )
 
+
+def descargar_lote(items, calidad_audio, resultados_iniciales=None):
+    """Descarga un lote en paralelo y devuelve resultados serializables."""
+    resultados = list(resultados_iniciales or [])
+    if not items:
+        return resultados
+    progress_bar = st.progress(0)
+    status_text = st.empty()
+    with ThreadPoolExecutor(max_workers=MAX_WORKERS_DESCARGA) as executor:
+        futures = {executor.submit(descargar_item, item, calidad_audio): item for item in items}
+        for completadas, future in enumerate(as_completed(futures), start=1):
+            resultados.append(future.result())
+            status_text.text(f"Procesadas {completadas}/{len(items)} canciones...")
+            progress_bar.progress(completadas / len(items))
+    status_text.text("Proceso completado")
+    return resultados
+
+
+def etiqueta_candidato(candidato):
+    duracion = candidato.get("duracion_seg")
+    duracion_texto = f"{int(duracion) // 60}:{int(duracion) % 60:02d}" if duracion else "sin duración"
+    diferencia = candidato.get("diferencia_duracion_seg")
+    diferencia_texto = f" · Δ {diferencia:.1f}s" if diferencia is not None else ""
+    return f"[{candidato['fuente']}] {candidato['titulo']} — {candidato['uploader']} · {duracion_texto}{diferencia_texto} · {candidato['score']:.0f}%"
+
 opcion = st.selectbox(
     "¿Qué deseas descargar?",
     [
@@ -98,6 +129,36 @@ opcion = st.selectbox(
 
 url_input = st.text_input("Ingresa la URL:", placeholder="https://...")
 calidad_audio = st.selectbox("Calidad de audio:", list(CALIDADES_AUDIO.keys()), index=1)
+
+with st.popover("Ajustes de verificación", icon=":material/tune:"):
+    modo_verificacion = st.segmented_control(
+        "Modo", ["Automático", "Equilibrado", "Estricto"], default="Equilibrado",
+        help="Equilibrado deja las coincidencias dudosas en espera; Estricto pide revisar todas.",
+    )
+    st.caption("Prioridad de búsqueda (1 es la preferida)")
+    prioridad_1 = st.selectbox("Prioridad 1", ["Bandcamp", "SoundCloud", "YouTube"], index=0)
+    prioridad_2 = st.selectbox("Prioridad 2", ["Bandcamp", "SoundCloud", "YouTube"], index=1)
+    prioridad_3 = st.selectbox("Prioridad 3", ["Bandcamp", "SoundCloud", "YouTube"], index=2)
+    tolerancia_duracion = st.slider("Tolerancia de duración (segundos)", 1, 30, 12)
+    similitud_minima = st.slider("Similitud mínima", 50, 100, 72)
+    margen_ambiguedad = st.slider("Margen para considerar empate", 1, 25, 8)
+    max_candidatos = st.slider("Candidatos por canción", 2, 9, 5)
+    revisar_multiples = st.toggle("Revisar cuando existan varias versiones", value=True)
+
+prioridad_fuentes = (prioridad_1, prioridad_2, prioridad_3)
+ajustes_validos = len(set(prioridad_fuentes)) == 3
+if not ajustes_validos:
+    st.warning("Cada posición de prioridad debe usar una fuente distinta.")
+ajustes_verificacion = {
+    **AJUSTES_VERIFICACION_DEFAULT,
+    "modo": modo_verificacion or "Equilibrado",
+    "prioridad_fuentes": prioridad_fuentes,
+    "tolerancia_duracion_seg": tolerancia_duracion,
+    "similitud_minima": similitud_minima,
+    "margen_ambiguedad": margen_ambiguedad,
+    "max_candidatos": max_candidatos,
+    "revisar_multiples": revisar_multiples,
+}
 
 if st.button("Analizar canciones", type="primary"):
     if not url_input.strip():
@@ -148,71 +209,93 @@ if "canciones_detectadas" in st.session_state and st.session_state["canciones_de
         if marcada:
             seleccionadas.append(item)
 
-    if st.button("Descargar canciones seleccionadas", type="primary", disabled=not seleccionadas):
-        # Loader visual opcional para descargas:
-        # loading_placeholder = st.empty()
-        # if os.path.exists(LOADING_ANIMATION):
-        #     loading_placeholder.image(LOADING_ANIMATION, width=220)
-        progress_bar = st.progress(0)
-        status_text = st.empty()
-        resultados = []
-        archivos_descargados_sesion = []
+    if st.button(
+        "Verificar y descargar canciones seleccionadas", type="primary",
+        disabled=not seleccionadas or not ajustes_validos,
+    ):
+        pendientes, seguras, resultados = [], [], []
+        with st.status("Buscando y comparando versiones...", expanded=True) as estado:
+            for indice, item in enumerate(seleccionadas, start=1):
+                st.write(f"Verificando {indice}/{len(seleccionadas)}: {item['nombre_salida']}")
+                analisis = analizar_coincidencia(item, ajustes_verificacion)
+                if analisis["estado"] == "segura":
+                    elegido = analisis["candidatos"][0]
+                    seguras.append({
+                        **item, "url_directa": elegido["url"],
+                        "fuente_seleccionada": elegido["fuente"], "bloquear_fallback": True,
+                    })
+                elif analisis["estado"] == "revision":
+                    pendientes.append({"item": item, "analisis": analisis})
+                else:
+                    resultados.append({
+                        "estado": "omitida", "ruta": None,
+                        "mensaje": f"**{item['nombre_salida']}**: no hubo una coincidencia suficientemente fiable",
+                    })
+            estado.update(
+                label=f"Verificación completa: {len(seguras)} seguras, {len(pendientes)} pendientes",
+                state="complete",
+            )
+        if seguras:
+            resultados = descargar_lote(seguras, calidad_audio, resultados)
+        st.session_state["revision_pendiente"] = pendientes
+        st.session_state["resultados_descarga"] = resultados
+        st.session_state["calidad_trabajo"] = calidad_audio
 
-        with st.expander("📋 Ver registro detallado de canciones", expanded=True):
-            log_container = st.empty()
-            log_lines = []
-            with ThreadPoolExecutor(max_workers=MAX_WORKERS_DESCARGA) as executor:
-                futures = {
-                    executor.submit(descargar_item, item, calidad_audio): item
-                    for item in seleccionadas
-                }
-                for completadas, future in enumerate(as_completed(futures), start=1):
-                    resultado = future.result()
-                    resultados.append(resultado)
-                    if resultado.get('ruta') and os.path.exists(resultado['ruta']):
-                        archivos_descargados_sesion.append(resultado['ruta'])
-                    log_lines.append(resultado['mensaje'])
-                    status_text.text(f"Procesadas {completadas}/{len(seleccionadas)} canciones...")
-                    log_container.markdown("\n\n".join(log_lines))
-                    progress_bar.progress(completadas / len(seleccionadas))
+    pendientes = st.session_state.get("revision_pendiente", [])
+    if pendientes:
+        st.divider()
+        st.subheader("Versiones pendientes de tu revisión")
+        st.info("Las coincidencias seguras ya se procesaron. Escucha o abre la fuente antes de confirmar estas versiones.")
+        elecciones = []
+        for indice, pendiente in enumerate(pendientes):
+            item = pendiente["item"]
+            candidatos = pendiente["analisis"]["candidatos"]
+            with st.container(border=True):
+                st.markdown(f"**{item['nombre_salida']}**")
+                st.caption(" · ".join(pendiente["analisis"]["motivos"]))
+                opciones = ["Omitir esta canción", *[etiqueta_candidato(c) for c in candidatos]]
+                eleccion = st.selectbox(
+                    "Versión a descargar", opciones, key=f"revision_candidato_{indice}",
+                )
+                if eleccion != opciones[0]:
+                    candidato = candidatos[opciones.index(eleccion) - 1]
+                    st.link_button("Abrir fuente para verificar", candidato["url"], icon=":material/open_in_new:")
+                    elecciones.append({
+                        **item, "url_directa": candidato["url"],
+                        "fuente_seleccionada": candidato["fuente"], "bloquear_fallback": True,
+                    })
+        if st.button("Confirmar versiones y continuar", type="primary"):
+            resultados = descargar_lote(
+                elecciones, st.session_state["calidad_trabajo"],
+                st.session_state.get("resultados_descarga", []),
+            )
+            st.session_state["resultados_descarga"] = resultados
+            st.session_state["revision_pendiente"] = []
+            st.rerun()
 
-        status_text.text("¡Proceso completado!")
-        # loading_placeholder.empty()
-        descargadas_ok = sum(1 for r in resultados if r['estado'] == 'descargada')
-        omitidas_existentes = sum(1 for r in resultados if r['estado'] == 'omitida_existente')
-        omitidas = sum(1 for r in resultados if r['estado'] == 'omitida')
-        fallidas = sum(1 for r in resultados if r['estado'] == 'fallida')
+    resultados = st.session_state.get("resultados_descarga", [])
+    if resultados:
+        descargadas_ok = sum(1 for r in resultados if r["estado"] == "descargada")
+        omitidas_existentes = sum(1 for r in resultados if r["estado"] == "omitida_existente")
+        omitidas = sum(1 for r in resultados if r["estado"] == "omitida")
+        fallidas = sum(1 for r in resultados if r["estado"] == "fallida")
+        archivos = [r["ruta"] for r in resultados if r.get("ruta") and os.path.exists(r["ruta"])]
 
         st.divider()
-        st.markdown("### 📊 RESUMEN FINAL DEL PROCESO")
-        col1, col2, col3, col4, col5 = st.columns(5)
-        col1.metric("♫ Detectadas", len(canciones))
-        col2.metric("✦ Descargadas", descargadas_ok)
-        col3.metric("✓ Ya existían", omitidas_existentes)
-        col4.metric("シ Omitidas", omitidas)
-        col5.metric("♱ Fallidas", fallidas)
-
-        if descargadas_ok > 0 and fallidas == 0 and omitidas == 0:
-            st.success("🎉 ¡Proceso completado con éxito!")
-        elif descargadas_ok > 0 or omitidas_existentes > 0:
-            st.info("El proceso finalizó con algunas canciones omitidas o fallidas.")
-
-        if archivos_descargados_sesion:
-            st.markdown(f"📁 **Canciones guardadas directamente en:** `{DOWNLOADS_FOLDER}`")
-            col_btn1, col_btn2 = st.columns(2)
-            with col_btn1:
-                if st.button("📂 Abrir Carpeta de Descargas", use_container_width=True):
-                    try:
-                        os.startfile(DOWNLOADS_FOLDER)
-                    except Exception:
-                        pass
-            with col_btn2:
-                zip_buffer = crear_zip_en_memoria(archivos_descargados_sesion)
-                st.download_button(
-                    label="📦 Descargar Compilado (.ZIP)",
-                    data=zip_buffer,
-                    file_name="compilado_dj_ada.zip",
-                    mime="application/zip",
-                    use_container_width=True,
-                    type="primary"
-                )
+        st.subheader("Resumen del proceso")
+        col1, col2, col3, col4 = st.columns(4)
+        col1.metric("Descargadas", descargadas_ok)
+        col2.metric("Ya existentes", omitidas_existentes)
+        col3.metric("Omitidas", omitidas)
+        col4.metric("Fallidas", fallidas)
+        with st.expander("Registro detallado"):
+            for resultado in resultados:
+                st.markdown(resultado["mensaje"])
+        if archivos and not pendientes:
+            st.markdown(f"**Canciones guardadas en:** `{DOWNLOADS_FOLDER}`")
+            zip_buffer = crear_zip_en_memoria(archivos)
+            st.download_button(
+                "Descargar compilado (.ZIP)", data=zip_buffer,
+                file_name="compilado_dj_ada.zip", mime="application/zip",
+                width="stretch", type="primary",
+            )

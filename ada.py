@@ -55,7 +55,11 @@ def analizar_y_resolver_coincidencias(lista_canciones):
             titulo_cand = cand.get("title", "")
             uploader = cand.get("uploader") or cand.get("channel") or "Artista Desconocido"
             url = cand.get("url") or cand.get("webpage_url")
-            fuente = "SoundCloud" if url and "soundcloud" in url.lower() else "YouTube"
+            fuente = cand.get("_ada_fuente") or (
+                "Bandcamp" if url and "bandcamp" in url.lower()
+                else "SoundCloud" if url and "soundcloud" in url.lower()
+                else "YouTube"
+            )
             score = calcular_similitud(query_busqueda, titulo_cand, uploader)
             opciones_evaluadas.append({
                 "url_directa": url,
