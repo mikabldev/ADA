@@ -222,7 +222,8 @@ if "canciones_detectadas" in st.session_state and st.session_state["canciones_de
                     elegido = analisis["candidatos"][0]
                     seguras.append({
                         **item, "url_directa": elegido["url"],
-                        "fuente_seleccionada": elegido["fuente"], "bloquear_fallback": True,
+                        "fuente_seleccionada": elegido["fuente"], "genero": elegido.get("genero"),
+                        "bloquear_fallback": True,
                     })
                 elif analisis["estado"] == "revision":
                     pendientes.append({"item": item, "analisis": analisis})
@@ -262,7 +263,8 @@ if "canciones_detectadas" in st.session_state and st.session_state["canciones_de
                     st.link_button("Abrir fuente para verificar", candidato["url"], icon=":material/open_in_new:")
                     elecciones.append({
                         **item, "url_directa": candidato["url"],
-                        "fuente_seleccionada": candidato["fuente"], "bloquear_fallback": True,
+                        "fuente_seleccionada": candidato["fuente"], "genero": candidato.get("genero"),
+                        "bloquear_fallback": True,
                     })
         if st.button("Confirmar versiones y continuar", type="primary"):
             resultados = descargar_lote(
@@ -291,6 +293,13 @@ if "canciones_detectadas" in st.session_state and st.session_state["canciones_de
         with st.expander("Registro detallado"):
             for resultado in resultados:
                 st.markdown(resultado["mensaje"])
+                analisis = resultado.get("analisis_acustico")
+                if analisis:
+                    bpm = f"{analisis['bpm']:.2f} BPM" if analisis.get("bpm") else "BPM no detectado"
+                    tonalidad = analisis.get("camelot") or "tonalidad no detectada"
+                    inicio = analisis.get("audible_start_seconds", 0)
+                    final = analisis.get("audible_end_seconds", 0)
+                    st.caption(f"{bpm} · Camelot {tonalidad} · audio audible {inicio:.2f}s–{final:.2f}s")
         if archivos and not pendientes:
             st.markdown(f"**Canciones guardadas en:** `{DOWNLOADS_FOLDER}`")
             zip_buffer = crear_zip_en_memoria(archivos)

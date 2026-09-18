@@ -8,7 +8,7 @@ from urllib.parse import urljoin
 import requests
 from bs4 import BeautifulSoup
 from mutagen import File as MutagenFile
-from mutagen.id3 import ID3, TALB, TIT2, TPE1
+from mutagen.id3 import COMM, ID3, TALB, TBPM, TCON, TIT2, TKEY, TPE1, TXXX
 from mutagen.wave import WAVE
 from rapidfuzz import fuzz
 import yt_dlp
@@ -90,21 +90,44 @@ def etiquetar_wav(ruta_audio, item, album="ADA Downloads"):
     titulo = item.get('titulo') or dividir_artista_titulo(item['nombre_salida'])[1]
     album = item.get('album') or album
 
+    analisis = item.get("analisis_acustico") or {}
+
+    def agregar_etiquetas(tags):
+        tags.add(TPE1(encoding=3, text=artista))
+        tags.add(TIT2(encoding=3, text=titulo))
+        tags.add(TALB(encoding=3, text=album))
+        if analisis.get("bpm"):
+            tags.add(TBPM(encoding=3, text=f"{analisis['bpm']:.2f}"))
+        if analisis.get("camelot"):
+            tags.add(TKEY(encoding=3, text=analisis["camelot"]))
+            tags.add(TXXX(encoding=3, desc="INITIALKEY", text=analisis["camelot"]))
+        if analisis.get("musical_key") and analisis.get("scale"):
+            tags.add(TXXX(encoding=3, desc="ADA_MUSICAL_KEY", text=f"{analisis['musical_key']} {analisis['scale']}"))
+        genero = item.get("genero") or item.get("genre")
+        if genero:
+            tags.add(TCON(encoding=3, text=str(genero)))
+        for campo, descripcion in (
+            ("key_confidence", "ADA_KEY_CONFIDENCE"),
+            ("bpm_confidence", "ADA_BPM_CONFIDENCE"),
+            ("audible_start_seconds", "ADA_AUDIBLE_START"),
+            ("audible_end_seconds", "ADA_AUDIBLE_END"),
+            ("fingerprint", "ADA_CHROMAPRINT"),
+        ):
+            if analisis.get(campo) is not None:
+                tags.add(TXXX(encoding=3, desc=descripcion, text=str(analisis[campo])))
+        tags.add(COMM(encoding=3, lang="spa", desc="ADA", text="Analizado por ADA"))
+
     try:
         audio = WAVE(ruta_audio)
         if audio.tags is None:
             audio.add_tags()
-        audio.tags.add(TPE1(encoding=3, text=artista))
-        audio.tags.add(TIT2(encoding=3, text=titulo))
-        audio.tags.add(TALB(encoding=3, text=album))
+        agregar_etiquetas(audio.tags)
         audio.save()
         return True
     except Exception:
         try:
             tags = ID3()
-            tags.add(TPE1(encoding=3, text=artista))
-            tags.add(TIT2(encoding=3, text=titulo))
-            tags.add(TALB(encoding=3, text=album))
+            agregar_etiquetas(tags)
             tags.save(ruta_audio)
             return True
         except Exception:
@@ -502,6 +525,7 @@ def evaluar_candidatos(item, candidatos, ajustes=None):
         if url:
             evaluados.append({
                 "url": url, "titulo": titulo, "uploader": uploader, "fuente": fuente,
+                "genero": candidato.get("genre"),
                 "duracion_seg": duracion, "diferencia_duracion_seg": diferencia,
                 "score_texto": score_texto, "score": score,
                 "terminos_version": sorted(terminos_extra),
@@ -539,6 +563,7 @@ def analizar_coincidencia(item, ajustes=None):
             "url": item["url_directa"], "titulo": item.get("titulo") or item["nombre_salida"],
             "uploader": item.get("artista") or "Fuente directa", "fuente": "Enlace directo",
             "duracion_seg": item.get("duration_ms", 0) / 1000 if item.get("duration_ms") else None,
+            "genero": item.get("genero") or item.get("genre"),
             "diferencia_duracion_seg": 0, "score_texto": 100, "score": 100,
             "terminos_version": [],
         }], "motivos": []}
@@ -615,12 +640,20 @@ def descargar_item(item, calidad_audio, directorio_salida=None, progress_hooks=N
     if os.path.exists(ruta_archivo_wav):
         ok_duracion, diferencia = duracion_compatible(ruta_archivo_wav, item.get('duration_ms'))
         if ok_duracion:
+            analisis = None
+            try:
+                from ada_audio import analyze_audio
+                analisis = analyze_audio(ruta_archivo_wav).to_dict()
+                item = {**item, "analisis_acustico": analisis}
+            except Exception:
+                pass
             etiquetar_wav(ruta_archivo_wav, item)
             return {
                 'estado': 'omitida_existente',
                 'nombre': nombre_archivo,
                 'ruta': ruta_archivo_wav,
-                'mensaje': f"**{nombre_archivo}** ya existía y fue omitida"
+                'mensaje': f"**{nombre_archivo}** ya existía y fue omitida",
+                'analisis_acustico': analisis,
             }
         return {
             'estado': 'fallida',
@@ -662,13 +695,21 @@ def descargar_item(item, calidad_audio, directorio_salida=None, progress_hooks=N
                     'ruta': ruta_archivo_wav,
                     'mensaje': f"**{nombre_archivo}** descargada desde {fuente}, pero la duración difiere por {diferencia:.1f}s"
                 }
+            analisis = None
+            try:
+                from ada_audio import analyze_audio
+                analisis = analyze_audio(ruta_archivo_wav).to_dict()
+                item = {**item, "analisis_acustico": analisis}
+            except Exception:
+                pass
             etiquetas_ok = etiquetar_wav(ruta_archivo_wav, item)
             nota_tags = "" if etiquetas_ok else " (sin etiquetas ID3)"
             return {
                 'estado': 'descargada',
                 'nombre': nombre_archivo,
                 'ruta': ruta_archivo_wav,
-                'mensaje': f"**{nombre_archivo}** descargada desde {fuente}{nota_tags}"
+                'mensaje': f"**{nombre_archivo}** descargada desde {fuente}{nota_tags}",
+                'analisis_acustico': analisis,
             }
         except Exception:
             continue

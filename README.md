@@ -103,6 +103,14 @@ Antes de descargar, ADA compara candidatos por título, artista, duración, tér
 
 La rueda **Ajustes de verificación** permite cambiar el modo automático/equilibrado/estricto, el orden de fuentes, tolerancia de duración, similitud mínima, margen de ambigüedad y número de candidatos.
 
+### Análisis acústico y etiquetas DJ
+
+Después de convertir cada archivo, ADA calcula localmente BPM, tonalidad, código Camelot, confianza, inicio/final audible, cromas de intro/outro y una huella Chromaprint. No se envía audio a servicios externos.
+
+Los valores compatibles se escriben dentro del WAV como etiquetas ID3: `TBPM` (BPM), `TKEY`/`INITIALKEY` (Camelot), `TCON` (género cuando la fuente lo proporciona) y campos `TXXX` propios para confianza, clave musical, tramo audible y fingerprint. La API también devuelve el análisis completo por canción.
+
+La lectura de etiquetas dentro de WAV depende del software o equipo DJ. Si un dispositivo no interpreta ID3 en WAV, conserva el audio pero puede ignorar BPM, clave o género; AIFF, FLAC y MP3 suelen tener interoperabilidad de metadatos más uniforme.
+
 ### CLI
 
 ```bash

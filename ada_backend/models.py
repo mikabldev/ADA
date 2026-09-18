@@ -98,6 +98,7 @@ class TrackResult(BaseModel):
     status: str
     message: str
     filename: str | None = None
+    acoustic_analysis: dict | None = None
 
 
 class JobResponse(BaseModel):

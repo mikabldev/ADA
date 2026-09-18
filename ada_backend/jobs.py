@@ -95,6 +95,7 @@ class JobManager:
                 results.append(TrackResult(
                     track_id=track.id, status=result["estado"], message=result["mensaje"].replace("**", ""),
                     filename=Path(result["ruta"]).name if result.get("ruta") else None,
+                    acoustic_analysis=result.get("analisis_acustico"),
                 ).model_dump())
                 if job_id in self._cancelled:
                     self._update(job_id, status=JobStatus.cancelled, results=results)
