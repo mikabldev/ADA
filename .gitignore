@@ -8,3 +8,5 @@ __pycache__/
 frontend/node_modules/
 frontend/dist/
 .ada-data/
+.streamlit/secrets.toml
+.spotify-cache*

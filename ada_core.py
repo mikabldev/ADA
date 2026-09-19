@@ -133,7 +133,7 @@ def etiquetar_wav(ruta_audio, item, album="ADA Downloads"):
         except Exception:
             return False
 
-def obtener_metadatos_spotify(url_playlist):
+def _obtener_metadatos_spotify_legacy(url_playlist):
     """
     Extrae los metadatos de una playlist pública de Spotify decodificando caracteres Unicode
     y filtrando estrictamente la cabecera de la lista.
@@ -300,6 +300,62 @@ def obtener_metadatos_spotify(url_playlist):
         return canciones
     except Exception:
         return []
+
+def obtener_metadatos_spotify(url_playlist, spotify=None):
+    """Obtiene todas las pistas de una playlist mediante Spotify Web API OAuth."""
+    if spotify is None:
+        # Compatibilidad temporal para la CLI y el backend, que aún no tienen
+        # un flujo interactivo de OAuth propio.
+        return _obtener_metadatos_spotify_legacy(url_playlist)
+
+    coincidencia = re.search(r"(?:playlist/|spotify:playlist:)([A-Za-z0-9]{22})", url_playlist.strip())
+    if not coincidencia:
+        raise ValueError("La URL no contiene un identificador de playlist de Spotify válido.")
+
+    playlist_id = coincidencia.group(1)
+    canciones = []
+    pagina = spotify.playlist_items(
+        playlist_id,
+        limit=50,
+        additional_types=("track",),
+    )
+
+    while pagina:
+        for entrada in pagina.get("items", []):
+            # Development Mode 2026 usa `item`; Extended Mode y respuestas
+            # anteriores pueden conservar `track`.
+            pista = entrada.get("item") or entrada.get("track")
+            if not isinstance(pista, dict) or pista.get("type", "track") != "track":
+                continue
+
+            titulo = decodificar_texto(pista.get("name", ""))
+            artistas = pista.get("artists") or []
+            nombres_artistas = [
+                decodificar_texto(artista.get("name", ""))
+                for artista in artistas
+                if isinstance(artista, dict) and artista.get("name")
+            ]
+            artista = ", ".join(nombres_artistas)
+            album_data = pista.get("album") or {}
+            album = decodificar_texto(album_data.get("name", "")) if isinstance(album_data, dict) else ""
+
+            if not titulo or not artista:
+                continue
+
+            clave = f"{artista} - {titulo}"
+            canciones.append({
+                "query_limpia": clave,
+                "nombre_salida": clave,
+                "artista": artista,
+                "titulo": titulo,
+                "album": album,
+                "duration_ms": pista.get("duration_ms"),
+            })
+
+        pagina = spotify.next(pagina) if pagina.get("next") else None
+
+    return canciones
+
 
 def obtener_metadatos_ytdlp(url_playlist, plataforma="YouTube / SoundCloud"):
     """

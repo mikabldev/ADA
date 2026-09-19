@@ -1,9 +1,17 @@
 import os
 import base64
+import hashlib
+import hmac
 import random
 import glob
+import secrets
+import time
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
+import spotipy
+from spotipy.cache_handler import MemoryCacheHandler
+from spotipy.exceptions import SpotifyException
+from spotipy.oauth2 import SpotifyOAuth
 import streamlit as st
 
 from ada_core import (
@@ -78,6 +86,84 @@ st.markdown(custom_css_and_video, unsafe_allow_html=True)
 st.session_state.setdefault("revision_pendiente", [])
 st.session_state.setdefault("resultados_descarga", [])
 st.session_state.setdefault("calidad_trabajo", None)
+st.session_state.setdefault("spotify_token", None)
+
+
+def crear_spotify_oauth():
+    """Crea el gestor OAuth sin guardar tokens compartidos en disco."""
+    configuracion = st.secrets["spotify"]
+    return SpotifyOAuth(
+        client_id=configuracion["client_id"],
+        client_secret=configuracion["client_secret"],
+        redirect_uri=configuracion["redirect_uri"],
+        scope="playlist-read-private playlist-read-collaborative",
+        show_dialog=False,
+        open_browser=False,
+        cache_handler=MemoryCacheHandler(),
+    )
+
+
+def crear_estado_oauth_spotify():
+    """Crea un estado OAuth firmado, válido incluso si Spotify abre otra pestaña."""
+    marca_tiempo = str(int(time.time()))
+    nonce = secrets.token_urlsafe(24)
+    contenido = f"{marca_tiempo}.{nonce}"
+    clave = str(st.secrets["spotify"]["client_secret"]).encode()
+    firma = hmac.new(clave, contenido.encode(), hashlib.sha256).hexdigest()
+    return f"{contenido}.{firma}"
+
+
+def validar_estado_oauth_spotify(estado):
+    """Valida la firma y limita el callback OAuth a diez minutos."""
+    try:
+        marca_tiempo, nonce, firma = estado.split(".", 2)
+        contenido = f"{marca_tiempo}.{nonce}"
+        clave = str(st.secrets["spotify"]["client_secret"]).encode()
+        firma_esperada = hmac.new(clave, contenido.encode(), hashlib.sha256).hexdigest()
+        vigente = 0 <= time.time() - int(marca_tiempo) <= 600
+        return vigente and hmac.compare_digest(firma, firma_esperada)
+    except (AttributeError, TypeError, ValueError):
+        return False
+
+
+def obtener_cliente_spotify():
+    """Procesa el callback, renueva el token y devuelve un cliente autenticado."""
+    oauth = crear_spotify_oauth()
+    codigo = st.query_params.get("code")
+    error_oauth = st.query_params.get("error")
+
+    if error_oauth:
+        st.query_params.clear()
+        raise RuntimeError(f"Spotify rechazó la autorización: {error_oauth}")
+
+    if codigo:
+        estado_recibido = st.query_params.get("state")
+        if not validar_estado_oauth_spotify(estado_recibido):
+            st.query_params.clear()
+            raise RuntimeError("La respuesta OAuth de Spotify no superó la validación de seguridad.")
+        st.session_state["spotify_token"] = oauth.get_access_token(
+            codigo,
+            check_cache=False,
+        )
+        st.query_params.clear()
+
+    token = st.session_state.get("spotify_token")
+    if token and oauth.is_token_expired(token):
+        refresh_token = token.get("refresh_token")
+        if not refresh_token:
+            st.session_state["spotify_token"] = None
+            return None
+        token = oauth.refresh_access_token(refresh_token)
+        st.session_state["spotify_token"] = token
+
+    if not token:
+        return None
+    return spotipy.Spotify(auth=token["access_token"], requests_timeout=15)
+
+
+def url_autorizacion_spotify():
+    """Genera una URL OAuth ligada a esta sesión para prevenir CSRF."""
+    return crear_spotify_oauth().get_authorize_url(state=crear_estado_oauth_spotify())
 
 # -------------------------------------------------------------------
 # INTERFAZ GRÁFICA CON STREAMLIT
@@ -127,6 +213,33 @@ opcion = st.selectbox(
     ]
 )
 
+spotify = None
+spotify_auth_configurada = True
+if "Spotify" in opcion:
+    try:
+        spotify = obtener_cliente_spotify()
+    except (KeyError, FileNotFoundError):
+        spotify_auth_configurada = False
+        st.error("Falta la configuración `[spotify]` en `.streamlit/secrets.toml`.")
+    except Exception as error:
+        st.session_state["spotify_token"] = None
+        st.error(f"No se pudo completar la autenticación con Spotify: {error}")
+
+    if spotify is None and spotify_auth_configurada:
+        st.link_button(
+            "Conectar con Spotify",
+            url_autorizacion_spotify(),
+            icon=":material/login:",
+            type="primary",
+        )
+        st.caption("Inicia sesión con el propietario o un colaborador de la playlist.")
+    else:
+        with st.container(horizontal=True, vertical_alignment="center"):
+            st.success("Spotify conectado")
+            if st.button("Desconectar", icon=":material/logout:"):
+                st.session_state["spotify_token"] = None
+                st.rerun()
+
 url_input = st.text_input("Ingresa la URL:", placeholder="https://...")
 calidad_audio = st.selectbox("Calidad de audio:", list(CALIDADES_AUDIO.keys()), index=1)
 
@@ -160,7 +273,11 @@ ajustes_verificacion = {
     "revisar_multiples": revisar_multiples,
 }
 
-if st.button("Analizar canciones", type="primary"):
+if st.button(
+    "Analizar canciones",
+    type="primary",
+    disabled=("Spotify" in opcion and spotify is None),
+):
     if not url_input.strip():
         st.warning("Por favor, ingresa una URL válida.")
     else:
@@ -170,18 +287,41 @@ if st.button("Analizar canciones", type="primary"):
         # loading_placeholder = st.empty()
         # if os.path.exists(LOADING_ANIMATION):
         #     loading_placeholder.image(LOADING_ANIMATION, width=220)
-        with st.spinner("Analizando enlace y metadatos..."):
-            if "Spotify" in opcion:
-                canciones = obtener_metadatos_spotify(url_input)
-            elif "YouTube" in opcion:
-                canciones = obtener_metadatos_ytdlp(url_input, "YouTube")
-            elif "SoundCloud" in opcion:
-                canciones = obtener_metadatos_ytdlp(url_input, "SoundCloud")
+        hubo_error = False
+        try:
+            with st.spinner("Analizando enlace y metadatos..."):
+                if "Spotify" in opcion:
+                    canciones = obtener_metadatos_spotify(url_input, spotify=spotify)
+                elif "YouTube" in opcion:
+                    canciones = obtener_metadatos_ytdlp(url_input, "YouTube")
+                elif "SoundCloud" in opcion:
+                    canciones = obtener_metadatos_ytdlp(url_input, "SoundCloud")
+                else:
+                    canciones = obtener_metadatos_cancion_unica(url_input)
+        except ValueError as error:
+            hubo_error = True
+            canciones = []
+            st.error(str(error))
+        except SpotifyException as error:
+            hubo_error = True
+            canciones = []
+            if error.http_status == 403:
+                st.error(
+                    "Spotify no permite leer esta playlist con la cuenta conectada. "
+                    "Debes ser su propietario o colaborador y estar autorizado en Users Management."
+                )
+            elif error.http_status == 401:
+                st.session_state["spotify_token"] = None
+                st.error("La sesión de Spotify expiró. Vuelve a conectar tu cuenta.")
+            elif error.http_status == 429:
+                st.error("Spotify limitó temporalmente las solicitudes. Inténtalo más tarde.")
             else:
-                canciones = obtener_metadatos_cancion_unica(url_input)
+                st.error(f"Spotify respondió con un error HTTP {error.http_status}: {error.msg}")
         # loading_placeholder.empty()
 
-        if not canciones:
+        if hubo_error:
+            pass
+        elif not canciones:
             st.error("(Ó╭╮Ò) No se pudieron identificar canciones en la URL proporcionada.")
         else:
             st.session_state["canciones_detectadas"] = canciones

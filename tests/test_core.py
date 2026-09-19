@@ -11,6 +11,7 @@ from ada_core import (
     crear_zip_en_disco,
     descargar_item,
     limpiar_nombre_archivo,
+    obtener_metadatos_spotify,
 )
 
 
@@ -42,6 +43,42 @@ class CoreTests(unittest.TestCase):
         with patch("ada_core._buscar_candidatos_fuente", side_effect=fake_search):
             buscar_candidatos_multifuente("Artist - Track")
         self.assertEqual(seen, ["Bandcamp", "SoundCloud", "YouTube"])
+
+    def test_spotify_oauth_extractor_supports_new_and_legacy_item_fields(self):
+        class FakeSpotify:
+            def playlist_items(self, playlist_id, **kwargs):
+                self.playlist_id = playlist_id
+                return {
+                    "items": [{"item": {
+                        "type": "track", "name": "Track One", "duration_ms": 180_000,
+                        "artists": [{"name": "Artist A"}], "album": {"name": "Album A"},
+                    }}],
+                    "next": "page-2",
+                }
+
+            def next(self, page):
+                return {
+                    "items": [{"track": {
+                        "type": "track", "name": "Track Two", "duration_ms": 200_000,
+                        "artists": [{"name": "Artist B"}, {"name": "Artist C"}],
+                        "album": {"name": "Album B"},
+                    }}],
+                    "next": None,
+                }
+
+        spotify = FakeSpotify()
+        tracks = obtener_metadatos_spotify(
+            "https://open.spotify.com/playlist/3p1gL9zMswgYVengeckEsx?si=test",
+            spotify=spotify,
+        )
+
+        self.assertEqual(spotify.playlist_id, "3p1gL9zMswgYVengeckEsx")
+        self.assertEqual([track["titulo"] for track in tracks], ["Track One", "Track Two"])
+        self.assertEqual(tracks[1]["artista"], "Artist B, Artist C")
+
+    def test_spotify_oauth_extractor_rejects_invalid_url(self):
+        with self.assertRaisesRegex(ValueError, "identificador"):
+            obtener_metadatos_spotify("https://example.com/not-a-playlist", spotify=object())
 
     def test_studio_variant_is_sent_to_review(self):
         item = {"query_limpia": "Artist - Track", "duration_ms": 180_000}
