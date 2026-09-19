@@ -19,6 +19,8 @@ DOWNLOADS_FOLDER = os.path.abspath(os.path.expanduser(
 os.makedirs(DOWNLOADS_FOLDER, exist_ok=True)
 MAX_WORKERS_DESCARGA = 3
 DURACION_TOLERANCIA_SEG = 12
+TIMEOUT_REDIRECCION_SEG = 10
+TIMEOUT_YTDLP_SEG = 20
 
 CALIDADES_AUDIO = {
     "WAV 16-bit / 44.1 kHz": {"codec": "pcm_s16le", "sample_rate": "44100"},
@@ -367,7 +369,10 @@ def obtener_metadatos_ytdlp(url_playlist, plataforma="YouTube / SoundCloud"):
     
     if "on.soundcloud.com" in url_limpia:
         try:
-            res_redir = requests.head(url_limpia, allow_redirects=True, headers={'User-Agent': 'Mozilla/5.0'})
+            res_redir = requests.head(
+                url_limpia, allow_redirects=True,
+                headers={'User-Agent': 'Mozilla/5.0'}, timeout=TIMEOUT_REDIRECCION_SEG,
+            )
             url_limpia = res_redir.url.split("?")[0]
         except Exception:
             pass
@@ -375,7 +380,9 @@ def obtener_metadatos_ytdlp(url_playlist, plataforma="YouTube / SoundCloud"):
     is_soundcloud = "soundcloud.com" in url_limpia.lower()
     
     opts = {
-        'extract_flat': False if is_soundcloud else 'in_playlist',
+        'extract_flat': 'in_playlist',
+        'socket_timeout': TIMEOUT_YTDLP_SEG,
+        'retries': 1,
         'quiet': True,
         'no_warnings': True,
         'skip_download': True,
@@ -422,7 +429,10 @@ def obtener_metadatos_cancion_unica(url_cancion):
     
     if "on.soundcloud.com" in url_limpia:
         try:
-            res_redir = requests.head(url_limpia, allow_redirects=True, headers={'User-Agent': 'Mozilla/5.0'})
+            res_redir = requests.head(
+                url_limpia, allow_redirects=True,
+                headers={'User-Agent': 'Mozilla/5.0'}, timeout=TIMEOUT_REDIRECCION_SEG,
+            )
             url_limpia = res_redir.url.split("?")[0]
         except Exception:
             pass
@@ -431,6 +441,8 @@ def obtener_metadatos_cancion_unica(url_cancion):
         'quiet': True, 
         'no_warnings': True, 
         'skip_download': True,
+        'socket_timeout': TIMEOUT_YTDLP_SEG,
+        'retries': 1,
         'extractor_args': {
             'youtube': {'player_client': ['android', 'ios', 'web']}
         }
@@ -503,7 +515,10 @@ def buscar_candidatos_bandcamp(query, limite=3):
             if len(urls) >= limite:
                 break
         candidatos = []
-        with yt_dlp.YoutubeDL({"quiet": True, "no_warnings": True, "skip_download": True}) as ydl:
+        with yt_dlp.YoutubeDL({
+            "quiet": True, "no_warnings": True, "skip_download": True,
+            "socket_timeout": TIMEOUT_YTDLP_SEG, "retries": 1,
+        }) as ydl:
             for url in urls:
                 try:
                     info = ydl.extract_info(url, download=False)
@@ -525,6 +540,8 @@ def _buscar_candidatos_fuente(query, fuente):
     opts = {
         "quiet": True, "no_warnings": True, "ignoreerrors": True,
         "extract_flat": False,
+        "socket_timeout": TIMEOUT_YTDLP_SEG,
+        "retries": 1,
         "match_filter": yt_dlp.utils.match_filter_func("duration <= 600"),
         "extractor_args": {"youtube": {"player_client": ["android", "ios", "web"]}},
     }
@@ -668,6 +685,8 @@ def construir_ydl_opts(nombre_archivo, calidad_audio, directorio_salida=None, pr
         'quiet': True,
         'no_warnings': True,
         'noprogress': True,
+        'socket_timeout': TIMEOUT_YTDLP_SEG,
+        'retries': 1,
         'progress_hooks': progress_hooks or [],
     }
 

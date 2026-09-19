@@ -12,6 +12,7 @@ from ada_core import (
     descargar_item,
     limpiar_nombre_archivo,
     obtener_metadatos_spotify,
+    obtener_metadatos_ytdlp,
 )
 
 
@@ -79,6 +80,38 @@ class CoreTests(unittest.TestCase):
     def test_spotify_oauth_extractor_rejects_invalid_url(self):
         with self.assertRaisesRegex(ValueError, "identificador"):
             obtener_metadatos_spotify("https://example.com/not-a-playlist", spotify=object())
+
+    def test_ytdlp_playlist_uses_flat_extraction_and_redirect_timeout(self):
+        captured = {}
+
+        class FakeResponse:
+            url = "https://soundcloud.com/artist/set"
+
+        class FakeYDL:
+            def __init__(self, options):
+                captured.update(options)
+
+            def __enter__(self):
+                return self
+
+            def __exit__(self, *args):
+                return False
+
+            def extract_info(self, url, download=False):
+                return {"entries": [{
+                    "title": "Track", "uploader": "Artist", "duration": 180,
+                    "webpage_url": "https://soundcloud.com/artist/track",
+                }]}
+
+        with patch("ada_core.requests.head", return_value=FakeResponse()) as head, \
+             patch("ada_core.yt_dlp.YoutubeDL", FakeYDL):
+            tracks = obtener_metadatos_ytdlp("https://on.soundcloud.com/example", "SoundCloud")
+
+        head.assert_called_once()
+        self.assertEqual(head.call_args.kwargs["timeout"], 10)
+        self.assertEqual(captured["extract_flat"], "in_playlist")
+        self.assertEqual(captured["socket_timeout"], 20)
+        self.assertEqual(tracks[0]["url_directa"], "https://soundcloud.com/artist/track")
 
     def test_studio_variant_is_sent_to_review(self):
         item = {"query_limpia": "Artist - Track", "duration_ms": 180_000}

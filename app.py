@@ -27,6 +27,7 @@ from ada_core import (
     obtener_metadatos_spotify,
     obtener_metadatos_ytdlp,
 )
+from ada_backend.config import settings
 
 # -------------------------------------------------------------------
 # CONFIGURACIÓN DE PÁGINA
@@ -44,6 +45,21 @@ LOADING_ANIMATION = os.path.join(ANIMATIONS_FOLDER, "loading_dj.gif")
 # y cambia LOADING_ANIMATION por:
 # LOADING_ANIMATION = random.choice(glob.glob(os.path.join(ANIMATIONS_FOLDER, "loading_*.*")))
 
+@st.cache_data(show_spinner=False)
+def obtener_recursos_visualizacion():
+    """Prepara una vez por sesión los recursos decorativos de la aplicación."""
+    rutas_video = glob.glob(os.path.join(BACKGROUNDS_FOLDER, "*.mp4"))
+    ruta_video = random.choice(rutas_video) if rutas_video else None
+    video_base64 = None
+    if ruta_video and os.path.exists(ruta_video):
+        with open(ruta_video, "rb") as video_file:
+            video_base64 = base64.b64encode(video_file.read()).decode("utf-8")
+
+    with open(RUTA_CSS, "r", encoding="utf-8") as css_file:
+        custom_css = css_file.read()
+    return custom_css, video_base64
+
+
 def obtener_video_local_base64(ruta_archivo):
     """
     Lee un archivo de video local y lo convierte a Base64.
@@ -54,10 +70,8 @@ def obtener_video_local_base64(ruta_archivo):
         return base64.b64encode(bytes_video).decode("utf-8")
     return None
 
-RUTAS_VIDEO_LOCAL = glob.glob(os.path.join(BACKGROUNDS_FOLDER, "*.mp4"))
-RUTA_VIDEO_LOCAL = random.choice(RUTAS_VIDEO_LOCAL) if RUTAS_VIDEO_LOCAL else None
-video_base64 = obtener_video_local_base64(RUTA_VIDEO_LOCAL) if RUTA_VIDEO_LOCAL else None
 RUTA_CSS = "style.css"
+custom_css, video_base64 = obtener_recursos_visualizacion()
 
 if video_base64:
     fuente_video_html = f'<source src="data:video/mp4;base64,{video_base64}" type="video/mp4">'
@@ -65,9 +79,6 @@ else:
     # URL de respaldo si no existe el archivo local
     VIDEO_BG_URL = "https://assets.mixkit.co/videos/preview/mixkit-dj-hands-mixing-music-on-a-sound-console-41551-large.mp4"
     fuente_video_html = f'<source src="{VIDEO_BG_URL}" type="video/mp4">'
-
-with open(RUTA_CSS, "r", encoding="utf-8") as css_file:
-    custom_css = css_file.read()
 
 custom_css_and_video = f"""
 <style>
@@ -241,6 +252,13 @@ if "Spotify" in opcion:
                 st.rerun()
 
 url_input = st.text_input("Ingresa la URL:", placeholder="https://...")
+clave_entrada = (opcion, url_input.strip().split("?")[0])
+if st.session_state.get("clave_entrada") != clave_entrada:
+    if st.session_state.get("clave_entrada") is not None:
+        st.session_state["canciones_detectadas"] = []
+        st.session_state["revision_pendiente"] = []
+        st.session_state["resultados_descarga"] = []
+    st.session_state["clave_entrada"] = clave_entrada
 calidad_audio = st.selectbox("Calidad de audio:", list(CALIDADES_AUDIO.keys()), index=1)
 
 with st.popover("Ajustes de verificación", icon=":material/tune:"):
@@ -298,6 +316,10 @@ if st.button(
                     canciones = obtener_metadatos_ytdlp(url_input, "SoundCloud")
                 else:
                     canciones = obtener_metadatos_cancion_unica(url_input)
+                if len(canciones) > settings.max_tracks:
+                    raise ValueError(
+                        f"La URL contiene {len(canciones)} canciones; el máximo permitido es {settings.max_tracks}."
+                    )
         except ValueError as error:
             hubo_error = True
             canciones = []
