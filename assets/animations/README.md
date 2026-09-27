@@ -5,7 +5,7 @@ Guarda aqui los loaders de la app.
 ## Archivo esperado por defecto
 
 ```text
-assets/animations/loading_dj.gif
+assets/animations/loading_music.gif
 ```
 
 ## Dimensiones recomendadas

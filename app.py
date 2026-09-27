@@ -40,14 +40,14 @@ st.set_page_config(page_title="Amateur DJ Agent (ADA)", page_icon="🎧", layout
 ASSETS_FOLDER = "assets"
 BACKGROUNDS_FOLDER = os.path.join(ASSETS_FOLDER, "backgrounds")
 ANIMATIONS_FOLDER = os.path.join(ASSETS_FOLDER, "animations")
-LOADING_ANIMATION = os.path.join(ANIMATIONS_FOLDER, "loading_dj.gif")
-# Para usar varios loaders, guarda varios GIF/MP4 en assets/animations
-# y cambia LOADING_ANIMATION por:
-# LOADING_ANIMATION = random.choice(glob.glob(os.path.join(ANIMATIONS_FOLDER, "loading_*.*")))
+LOADING_ANIMATION = os.path.join(ANIMATIONS_FOLDER, "loading_musics.gif")
+""" Para usar varios loaders, guardar varios GIF/MP4 en assets/animations
+y cambiar LOADING_ANIMATION por:
+LOADING_ANIMATION = random.choice(glob.glob(os.path.join(ANIMATIONS_FOLDER, "loading_*.*")))"""
 
 @st.cache_data(show_spinner=False)
 def obtener_recursos_visualizacion():
-    """Prepara una vez por sesión los recursos decorativos de la aplicación."""
+    # Prepara una vez por sesión los recursos decorativos de la aplicación.
     rutas_video = glob.glob(os.path.join(BACKGROUNDS_FOLDER, "*.mp4"))
     ruta_video = random.choice(rutas_video) if rutas_video else None
     video_base64 = None
@@ -352,7 +352,7 @@ if st.button(
 if "canciones_detectadas" in st.session_state and st.session_state["canciones_detectadas"]:
     canciones = st.session_state["canciones_detectadas"]
 
-    st.markdown("### 📋 Vista previa de playlist")
+    st.markdown("### Vista previa de playlist")
     seleccionar_todas = st.checkbox("Seleccionar todas", value=True)
     seleccionadas = []
 
